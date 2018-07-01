@@ -56,7 +56,6 @@
 #include "llvm/ADT/StringExtras.h"
 #include "llvm/ADT/StringRef.h"
 #include "llvm/ADT/Triple.h"
-#include "llvm/Transforms/Utils/Local.h"
 #include "llvm/Analysis/ValueTracking.h"
 #include "llvm/IR/Argument.h"
 #include "llvm/IR/Attributes.h"
@@ -66,6 +65,7 @@
 #include "llvm/IR/Constants.h"
 #include "llvm/IR/DataLayout.h"
 #include "llvm/IR/DerivedTypes.h"
+#include "llvm/IR/DomTreeUpdater.h"
 #include "llvm/IR/Dominators.h"
 #include "llvm/IR/Function.h"
 #include "llvm/IR/GlobalAlias.h"
@@ -91,6 +91,7 @@
 #include "llvm/Support/SpecialCaseList.h"
 #include "llvm/Transforms/Instrumentation.h"
 #include "llvm/Transforms/Utils/BasicBlockUtils.h"
+#include "llvm/Transforms/Utils/Local.h"
 #include <algorithm>
 #include <cassert>
 #include <cstddef>
@@ -406,7 +407,7 @@ struct DFSanFunction {
 
   DFSanFunction(DataFlowSanitizer &DFS, Function *F, bool IsNativeABI)
       : DFS(DFS), F(F), IA(DFS.getInstrumentedABI()), IsNativeABI(IsNativeABI) {
-    DT.recalculate(*F);
+    DomTreeUpdater(DT, DomTreeUpdater::UpdateStrategy::Eager).recalculate(*F);
     // FIXME: Need to track down the register allocator issue which causes poor
     // performance in pathological cases with large numbers of basic blocks.
     AvoidNewBlocks = F->size() > 1000;

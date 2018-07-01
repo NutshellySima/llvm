@@ -411,7 +411,8 @@ bool LoopRotate::rotateLoop(Loop *L, bool SimplifiedLatch) {
     Updates.push_back({DominatorTree::Insert, OrigPreheader, Exit});
     Updates.push_back({DominatorTree::Insert, OrigPreheader, NewHeader});
     Updates.push_back({DominatorTree::Delete, OrigPreheader, OrigHeader});
-    DT->applyUpdates(Updates);
+    DomTreeUpdater(*DT, DomTreeUpdater::UpdateStrategy::Eager)
+        .applyUpdates(Updates);
   }
 
   // At this point, we've finished our major CFG changes.  As part of cloning
@@ -467,7 +468,9 @@ bool LoopRotate::rotateLoop(Loop *L, bool SimplifiedLatch) {
     PHBI->eraseFromParent();
 
     // With our CFG finalized, update DomTree if it is available.
-    if (DT) DT->deleteEdge(OrigPreheader, Exit);
+    if (DT)
+      DomTreeUpdater(*DT, DomTreeUpdater::UpdateStrategy::Eager)
+          .deleteEdge(OrigPreheader, Exit);
   }
 
   assert(L->getLoopPreheader() && "Invalid loop preheader after loop rotation");

@@ -63,6 +63,7 @@
 #include "llvm/IR/CFG.h"
 #include "llvm/IR/Constants.h"
 #include "llvm/IR/DerivedTypes.h"
+#include "llvm/IR/DomTreeUpdater.h"
 #include "llvm/IR/Dominators.h"
 #include "llvm/IR/Function.h"
 #include "llvm/IR/IRBuilder.h"
@@ -1612,7 +1613,7 @@ bool LoopConstrainer::run() {
 
   addToParentLoopIfNeeded(makeArrayRef(std::begin(NewBlocks), NewBlocksEnd));
 
-  DT.recalculate(F);
+  DomTreeUpdater(DT, DomTreeUpdater::UpdateStrategy::Eager).recalculate(F);
 
   // We need to first add all the pre and post loop blocks into the loop
   // structures (as part of createClonedLoopStructure), and then update the

@@ -26,7 +26,6 @@
 #include "llvm/Analysis/MemoryBuiltins.h"
 #include "llvm/Analysis/TargetLibraryInfo.h"
 #include "llvm/Analysis/TargetTransformInfo.h"
-#include "llvm/Transforms/Utils/Local.h"
 #include "llvm/BinaryFormat/Dwarf.h"
 #include "llvm/IR/Attributes.h"
 #include "llvm/IR/BasicBlock.h"
@@ -37,6 +36,7 @@
 #include "llvm/IR/DataLayout.h"
 #include "llvm/IR/DebugInfoMetadata.h"
 #include "llvm/IR/DerivedTypes.h"
+#include "llvm/IR/DomTreeUpdater.h"
 #include "llvm/IR/Dominators.h"
 #include "llvm/IR/Function.h"
 #include "llvm/IR/GetElementPtrTypeIterator.h"
@@ -66,6 +66,7 @@
 #include "llvm/Transforms/Utils/CtorUtils.h"
 #include "llvm/Transforms/Utils/Evaluator.h"
 #include "llvm/Transforms/Utils/GlobalStatus.h"
+#include "llvm/Transforms/Utils/Local.h"
 #include <cassert>
 #include <cstdint>
 #include <utility>
@@ -2282,7 +2283,8 @@ OptimizeFunctions(Module &M, TargetLibraryInfo *TLI,
     if (!F->isDeclaration()) {
       if (removeUnreachableBlocks(*F)) {
         auto &DT = LookupDomTree(*F);
-        DT.recalculate(*F);
+        DomTreeUpdater(DT, DomTreeUpdater::UpdateStrategy::Eager)
+            .recalculate(*F);
         Changed = true;
       }
     }

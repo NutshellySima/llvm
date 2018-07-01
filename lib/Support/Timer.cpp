@@ -94,6 +94,8 @@ void Timer::init(StringRef Name, StringRef Description) {
 
 void Timer::init(StringRef Name, StringRef Description, TimerGroup &tg) {
   assert(!TG && "Timer already initialized");
+  std::unique_ptr<raw_ostream> OutStream = CreateInfoOutputFile();
+  *OutStream << Name << " " << Description << "\n";
   this->Name.assign(Name.begin(), Name.end());
   this->Description.assign(Description.begin(), Description.end());
   Running = Triggered = false;
@@ -229,6 +231,9 @@ TimerGroup::TimerGroup(StringRef Name, StringRef Description)
     Description(Description.begin(), Description.end()) {
   // Add the group to TimerGroupList.
   sys::SmartScopedLock<true> L(*TimerLock);
+  static int counter = 0;
+  std::unique_ptr<raw_ostream> OutStream = CreateInfoOutputFile();
+  *OutStream << counter++ << " " << Name << " " << Description << "\n";
   if (TimerGroupList)
     TimerGroupList->Prev = &Next;
   Next = TimerGroupList;

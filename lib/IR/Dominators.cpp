@@ -96,6 +96,28 @@ template bool llvm::DomTreeBuilder::Verify<DomTreeBuilder::BBPostDomTree>(
     const DomTreeBuilder::BBPostDomTree &DT,
     DomTreeBuilder::BBPostDomTree::VerificationLevel VL);
 
+#define DEBUG_TYPE "dom-tree-stats"
+
+STATISTIC(NumDomRecalculated, "Number of DomTree recalculations");
+STATISTIC(NumPostDomRecalculated, "Number of PostDomTree recalculations");
+STATISTIC(NumDomInserted, "Number of edges inserted -- DomTree");
+STATISTIC(NumPostDomInserted, "Number of edges inserted -- PostDomTree");
+STATISTIC(NumDomDeleted, "Number of edges deleted -- DomTree");
+STATISTIC(NumPostDomDeleted, "Number of edges deleted -- PostDomTree");
+STATISTIC(NumDomVisited, "Number of nodes visited by DFS -- DomTree");
+STATISTIC(NumPostDomVisited, "Number of nodes visited by DFS -- PostDomTree");
+
+#undef DEBUG_TYPE
+
+static DomTreeBuilder::StatsHolder DomTreeBuilderStats(NumDomRecalculated,
+                                                       NumPostDomRecalculated,
+                                                       NumDomInserted,
+                                                       NumPostDomInserted,
+                                                       NumDomDeleted,
+                                                       NumPostDomDeleted,
+                                                       NumDomVisited,
+                                                       NumPostDomVisited);
+
 bool DominatorTree::invalidate(Function &F, const PreservedAnalyses &PA,
                                FunctionAnalysisManager::Invalidator &) {
   // Check whether the analysis, all analyses on functions, or the function's

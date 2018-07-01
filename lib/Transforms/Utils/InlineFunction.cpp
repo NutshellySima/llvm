@@ -29,7 +29,6 @@
 #include "llvm/Analysis/EHPersonalities.h"
 #include "llvm/Analysis/InstructionSimplify.h"
 #include "llvm/Analysis/ProfileSummaryInfo.h"
-#include "llvm/Transforms/Utils/Local.h"
 #include "llvm/Analysis/ValueTracking.h"
 #include "llvm/IR/Argument.h"
 #include "llvm/IR/BasicBlock.h"
@@ -42,6 +41,7 @@
 #include "llvm/IR/DebugInfoMetadata.h"
 #include "llvm/IR/DebugLoc.h"
 #include "llvm/IR/DerivedTypes.h"
+#include "llvm/IR/DomTreeUpdater.h"
 #include "llvm/IR/Dominators.h"
 #include "llvm/IR/Function.h"
 #include "llvm/IR/IRBuilder.h"
@@ -61,6 +61,7 @@
 #include "llvm/Support/CommandLine.h"
 #include "llvm/Support/ErrorHandling.h"
 #include "llvm/Transforms/Utils/Cloning.h"
+#include "llvm/Transforms/Utils/Local.h"
 #include "llvm/Transforms/Utils/ValueMapper.h"
 #include <algorithm>
 #include <cassert>
@@ -927,7 +928,8 @@ static void AddAliasScopeMetadata(CallSite CS, ValueToValueMapTy &VMap,
   // To do a good job, if a noalias variable is captured, we need to know if
   // the capture point dominates the particular use we're considering.
   DominatorTree DT;
-  DT.recalculate(const_cast<Function&>(*CalledFunc));
+  DomTreeUpdater(DT, DomTreeUpdater::UpdateStrategy::Eager)
+      .recalculate(const_cast<Function &>(*CalledFunc));
 
   // noalias indicates that pointer values based on the argument do not alias
   // pointer values which are not based on it. So we add a new "scope" for each
@@ -1149,7 +1151,8 @@ static void AddAlignmentAssumptions(CallSite CS, InlineFunctionInfo &IFI) {
     unsigned Align = Arg.getType()->isPointerTy() ? Arg.getParamAlignment() : 0;
     if (Align && !Arg.hasByValOrInAllocaAttr() && !Arg.hasNUses(0)) {
       if (!DTCalculated) {
-        DT.recalculate(*CS.getCaller());
+        DomTreeUpdater(DT, DomTreeUpdater::UpdateStrategy::Eager)
+            .recalculate(*CS.getCaller());
         DTCalculated = true;
       }
 

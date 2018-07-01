@@ -34,6 +34,7 @@
 #include "llvm/IR/CallSite.h"
 #include "llvm/IR/DebugLoc.h"
 #include "llvm/IR/DiagnosticInfo.h"
+#include "llvm/IR/DomTreeUpdater.h"
 #include "llvm/IR/Dominators.h"
 #include "llvm/IR/Function.h"
 #include "llvm/IR/InstrTypes.h"
@@ -1104,7 +1105,8 @@ bool PartialInlinerImpl::FunctionCloner::doMultiRegionFunctionOutlining() {
 
   // The CodeExtractor needs a dominator tree.
   DominatorTree DT;
-  DT.recalculate(*ClonedFunc);
+  DomTreeUpdater(DT, DomTreeUpdater::UpdateStrategy::Eager)
+      .recalculate(*ClonedFunc);
 
   // Manually calculate a BlockFrequencyInfo and BranchProbabilityInfo.
   LoopInfo LI(DT);
@@ -1174,7 +1176,8 @@ PartialInlinerImpl::FunctionCloner::doSingleRegionFunctionOutlining() {
   assert(ClonedOI && "Expecting OutlineInfo for single region outline");
   // The CodeExtractor needs a dominator tree.
   DominatorTree DT;
-  DT.recalculate(*ClonedFunc);
+  DomTreeUpdater(DT, DomTreeUpdater::UpdateStrategy::Eager)
+      .recalculate(*ClonedFunc);
 
   // Manually calculate a BlockFrequencyInfo and BranchProbabilityInfo.
   LoopInfo LI(DT);

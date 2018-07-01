@@ -15,6 +15,7 @@
 #ifndef LLVM_DOMTREEUPDATER_H
 #define LLVM_DOMTREEUPDATER_H
 
+#include "llvm/ADT/Statistic.h"
 #include "llvm/Analysis/PostDominators.h"
 #include "llvm/IR/Dominators.h"
 #include "llvm/IR/Instructions.h"
@@ -24,6 +25,7 @@
 #include <vector>
 
 namespace llvm {
+
 class DomTreeUpdater {
 public:
   enum class UpdateStrategy : unsigned char { Eager = 0, Lazy = 1 };

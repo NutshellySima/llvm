@@ -207,6 +207,7 @@
 
 #include "WebAssembly.h"
 #include "llvm/IR/CallSite.h"
+#include "llvm/IR/DomTreeUpdater.h"
 #include "llvm/IR/Dominators.h"
 #include "llvm/IR/IRBuilder.h"
 #include "llvm/Transforms/Utils/BasicBlockUtils.h"
@@ -662,7 +663,8 @@ void WebAssemblyLowerEmscriptenEHSjLj::createSetTempRet0Function(Module &M) {
 
 void WebAssemblyLowerEmscriptenEHSjLj::rebuildSSA(Function &F) {
   DominatorTree &DT = getAnalysis<DominatorTreeWrapperPass>(F).getDomTree();
-  DT.recalculate(F); // CFG has been changed
+  DomTreeUpdater(DT, DomTreeUpdater::UpdateStrategy::Eager)
+      .recalculate(F); // CFG has been changed
   SSAUpdater SSA;
   for (BasicBlock &BB : F) {
     for (Instruction &I : BB) {
