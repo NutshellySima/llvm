@@ -286,7 +286,8 @@ bool JumpThreading::runOnFunction(Function &F) {
   auto DT = &getAnalysis<DominatorTreeWrapperPass>().getDomTree();
   auto LVI = &getAnalysis<LazyValueInfoWrapperPass>().getLVI();
   auto AA = &getAnalysis<AAResultsWrapperPass>().getAAResults();
-  DomTreeUpdater DTU(*DT, DomTreeUpdater::UpdateStrategy::Lazy);
+  DomTreeUpdater DTU(*DT, DomTreeUpdater::UpdateStrategy::Auto);
+  //DTU.snapshotCFG();
   std::unique_ptr<BlockFrequencyInfo> BFI;
   std::unique_ptr<BranchProbabilityInfo> BPI;
   bool HasProfileData = F.hasProfileData();
@@ -313,8 +314,8 @@ PreservedAnalyses JumpThreadingPass::run(Function &F,
   auto &DT = AM.getResult<DominatorTreeAnalysis>(F);
   auto &LVI = AM.getResult<LazyValueAnalysis>(F);
   auto &AA = AM.getResult<AAManager>(F);
-  DomTreeUpdater DTU(DT, DomTreeUpdater::UpdateStrategy::Lazy);
-
+  DomTreeUpdater DTU(DT, DomTreeUpdater::UpdateStrategy::Auto);
+  //DTU.snapshotCFG();
   std::unique_ptr<BlockFrequencyInfo> BFI;
   std::unique_ptr<BranchProbabilityInfo> BPI;
   if (F.hasProfileData()) {

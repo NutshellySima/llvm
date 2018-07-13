@@ -55,6 +55,9 @@ static Timer PDTUApplyUpdatesTimer("pdomtree-au", "papply-updates",
 static Timer PDTUInsertEdgeTimer("pdomtree-ie", "pinsert-edge", DTUTimerGroup);
 static Timer PDTUDeleteEdgeTimer("pdomtree-de", "pdelete-edge", DTUTimerGroup);
 static Timer PDTURecalculateTimer("pdomtree-re", "precalculate", DTUTimerGroup);
+static Timer SnapshotTimer("Snapshot", "Snapshot", DTUTimerGroup);
+static Timer DiffTimer("Diff", "Diff", DTUTimerGroup);
+static Timer DeduplicateTimer("Deduplicate", "Deduplicate", DTUTimerGroup);
 
 bool DomTreeUpdater::isUpdateValid(
     const DominatorTree::UpdateType Update) const {
@@ -82,6 +85,47 @@ bool DomTreeUpdater::isUpdateValid(
     return false;
   --NumInvalidPruned;
   return true;
+}
+
+
+std::vector<DominatorTree::UpdateType> DomTreeUpdater::diffCFG(CFG& PrevCFG, CFG& NewCFG){
+  DiffTimer.startTimer();
+  CFG DiffCFG;
+  std::vector<DominatorTree::UpdateType> Updates;
+  std::set_difference(PrevCFG.begin(),PrevCFG.end(),NewCFG.begin(),NewCFG.end(),std::inserter(DiffCFG,DiffCFG.begin()));
+  // Deleted Edges
+  for(auto& Edge:DiffCFG)
+    if(Edge.first!=Edge.second)
+      Updates.push_back({DominatorTree::Delete,Edge.first,Edge.second});
+  DiffCFG.clear();
+  std::set_difference(NewCFG.begin(),NewCFG.end(),PrevCFG.begin(),PrevCFG.end(),std::inserter(DiffCFG,DiffCFG.begin()));
+  // Inserted Edges
+  for(auto& Edge:DiffCFG)
+    if(Edge.first!=Edge.second)
+      Updates.push_back({DominatorTree::Insert,Edge.first,Edge.second});
+  DiffTimer.stopTimer();  
+  return Updates;
+}
+
+void DomTreeUpdater::snapshotCFG(CFG& Graph) {
+  if(!Func){
+    if(DT)
+      Func=&*DT->getRoot()->getParent();
+    else if(PDT)
+      Func=&*PDT->getRoot()->getParent();
+  }
+  SnapshotedBB=&Func->getEntryBlock();
+  SnapshotTimer.startTimer();
+  Graph.clear();
+  for(BasicBlock& BB:Func->getBasicBlockList())
+      for(auto* Addr:successors(&BB))
+          Graph.push_back(std::make_pair(&BB,Addr));
+  llvm::sort(Graph.begin(),Graph.end());
+#ifndef NDEBUG
+  assert(std::is_sorted(Graph.begin(),Graph.end()));
+#endif
+  Graph.erase(std::unique(Graph.begin(),Graph.end()),Graph.end());
+  SnapshotTimer.stopTimer();
 }
 
 bool DomTreeUpdater::isSelfDominance(
@@ -146,8 +190,12 @@ void DomTreeUpdater::applyDomTreeUpdates() {
 }
 
 void DomTreeUpdater::flush() {
-  applyDomTreeUpdates();
-  applyPostDomTreeUpdates();
+  if(!isAuto()) {
+    applyDomTreeUpdates();
+    applyPostDomTreeUpdates();
+  }
+  else
+    applyAutoUpdates();
   dropOutOfDateUpdates();
 }
 
@@ -211,9 +259,19 @@ bool DomTreeUpdater::recalculate(Function &F) {
   // Prevent forceFlushDeletedBB() from erasing DomTree or PostDomTree nodes.
   IsRecalculatingDomTree = IsRecalculatingPostDomTree = true;
 
+
   // Because all trees are going to be up-to-date after recalculation,
   // flush awaiting deleted BasicBlocks.
   if (forceFlushDeletedBB() || hasPendingUpdates()) {
+    if(isAuto()){
+      if(SnapshotedBB==&Func->getEntryBlock()){
+        NeedCalculate=true;
+        IsRecalculatingDomTree = IsRecalculatingPostDomTree = false;
+        applyAutoUpdates();
+        return true;
+      }
+    }
+
     if (DT)
       ++NumRecalculate;
     if (PDT)
@@ -231,6 +289,10 @@ bool DomTreeUpdater::recalculate(Function &F) {
     IsRecalculatingDomTree = IsRecalculatingPostDomTree = false;
     PendDTUpdateIndex = PendPDTUpdateIndex = PendUpdates.size();
     dropOutOfDateUpdates();
+    if(isAuto()) {
+      snapshotCFG(SnapshotedCFG);
+      NeedCalculate=false;
+    }
     return true;
   }
 
@@ -246,12 +308,16 @@ bool DomTreeUpdater::hasPendingUpdates() const {
 bool DomTreeUpdater::hasPendingDomTreeUpdates() const {
   if (!DT)
     return false;
+  if(isAuto()&&NeedCalculate)
+    return true;
   return PendUpdates.size() != PendDTUpdateIndex;
 }
 
 bool DomTreeUpdater::hasPendingPostDomTreeUpdates() const {
   if (!PDT)
     return false;
+  if(isAuto()&&NeedCalculate)
+    return true;
   return PendUpdates.size() != PendPDTUpdateIndex;
 }
 
@@ -268,7 +334,7 @@ bool DomTreeUpdater::isBBPendingDeletion(llvm::BasicBlock *DelBB) const {
 // Eager, the BasicBlock will be deleted immediately.
 void DomTreeUpdater::deleteBB(BasicBlock *DelBB) {
   validateDeleteBB(DelBB);
-  if (Strategy == UpdateStrategy::Lazy) {
+  if (isLazy()) {
     DeletedBBs.insert(DelBB);
     return;
   }
@@ -281,7 +347,7 @@ void DomTreeUpdater::deleteBB(BasicBlock *DelBB) {
 void DomTreeUpdater::callbackDeleteBB(
     BasicBlock *DelBB, std::function<void(BasicBlock *)> Callback) {
   validateDeleteBB(DelBB);
-  if (Strategy == UpdateStrategy::Lazy) {
+  if (isLazy()) {
     Callbacks.push_back(CallBackOnDeletion(DelBB, Callback));
     DeletedBBs.insert(DelBB);
     return;
@@ -317,6 +383,7 @@ void DomTreeUpdater::validateDeleteBB(BasicBlock *DelBB) {
   // Make sure DelBB has a valid terminator instruction. As long as DelBB is a
   // Child of Function F it must contain valid IR.
   new UnreachableInst(DelBB->getContext(), DelBB);
+  assert(succ_empty(DelBB));
 }
 
 void DomTreeUpdater::applyUpdates(ArrayRef<DominatorTree::UpdateType> Updates,
@@ -324,7 +391,14 @@ void DomTreeUpdater::applyUpdates(ArrayRef<DominatorTree::UpdateType> Updates,
   if (!DT && !PDT)
     return;
 
+  if(isAuto()) {
+    NeedCalculate=true;
+    return;
+  }
+
   if (Strategy == UpdateStrategy::Lazy || ForceRemoveDuplicates) {
+    if(isLazy())
+      DeduplicateTimer.startTimer();
     SmallVector<DominatorTree::UpdateType, 8> Seen;
     for (const auto U : Updates)
       // For Lazy UpdateStrategy, avoid duplicates to applyLazyUpdate() to save
@@ -337,6 +411,8 @@ void DomTreeUpdater::applyUpdates(ArrayRef<DominatorTree::UpdateType> Updates,
         if (Strategy == UpdateStrategy::Lazy)
           applyLazyUpdate(U.getKind(), U.getFrom(), U.getTo());
       }
+    if(isLazy())
+      DeduplicateTimer.stopTimer();  
     if (Strategy == UpdateStrategy::Lazy)
       return;
 
@@ -364,19 +440,30 @@ void DomTreeUpdater::applyUpdates(ArrayRef<DominatorTree::UpdateType> Updates,
 
 DominatorTree &DomTreeUpdater::getDomTree() {
   assert(DT && "Invalid acquisition of a null DomTree");
-  applyDomTreeUpdates();
+  if(!isAuto())
+    applyDomTreeUpdates();
+  else
+    applyAutoUpdates();
   dropOutOfDateUpdates();
   return *DT;
 }
 
 PostDominatorTree &DomTreeUpdater::getPostDomTree() {
   assert(PDT && "Invalid acquisition of a null PostDomTree");
-  applyPostDomTreeUpdates();
+  if(!isAuto())
+    applyPostDomTreeUpdates();
+  else
+    applyAutoUpdates();
   dropOutOfDateUpdates();
   return *PDT;
 }
 
 void DomTreeUpdater::insertEdge(BasicBlock *From, BasicBlock *To) {
+
+  if(isAuto()) {
+    NeedCalculate=true;
+    return;
+  }
 
 #ifndef NDEBUG
   assert(isUpdateValid({DominatorTree::Insert, From, To}) &&
@@ -402,6 +489,7 @@ void DomTreeUpdater::insertEdge(BasicBlock *From, BasicBlock *To) {
     return;
   }
 
+
   applyLazyUpdate(DominatorTree::Insert, From, To);
 }
 
@@ -411,6 +499,11 @@ void DomTreeUpdater::insertEdgeRelaxed(BasicBlock *From, BasicBlock *To) {
 
   if (!DT && !PDT)
     return;
+
+  if(isAuto()) {
+    NeedCalculate=true;
+    return;
+  }
 
   if (!isUpdateValid({DominatorTree::Insert, From, To}))
     return;
@@ -426,12 +519,17 @@ void DomTreeUpdater::insertEdgeRelaxed(BasicBlock *From, BasicBlock *To) {
     PDTUInsertEdgeTimer.stopTimer();
     return;
   }
-
+  DeduplicateTimer.startTimer();
   applyLazyUpdate(DominatorTree::Insert, From, To);
+  DeduplicateTimer.stopTimer();
 }
 
 void DomTreeUpdater::deleteEdge(BasicBlock *From, BasicBlock *To) {
 
+  if(isAuto()) {
+    NeedCalculate=true;
+    return;
+  }
 #ifndef NDEBUG
   assert(isUpdateValid({DominatorTree::Delete, From, To}) &&
          "Deleted edge still exists in the CFG!");
@@ -455,7 +553,6 @@ void DomTreeUpdater::deleteEdge(BasicBlock *From, BasicBlock *To) {
     PDTDeleteEdgeTimer.stopTimer();
     return;
   }
-
   applyLazyUpdate(DominatorTree::Delete, From, To);
 }
 
@@ -465,6 +562,11 @@ void DomTreeUpdater::deleteEdgeRelaxed(BasicBlock *From, BasicBlock *To) {
 
   if (!DT && !PDT)
     return;
+
+  if(isAuto()) {
+    NeedCalculate=true;
+    return;
+  }
 
   if (!isUpdateValid({DominatorTree::Delete, From, To}))
     return;
@@ -480,8 +582,9 @@ void DomTreeUpdater::deleteEdgeRelaxed(BasicBlock *From, BasicBlock *To) {
     PDTDeleteEdgeTimer.stopTimer();
     return;
   }
-
+  DeduplicateTimer.startTimer();
   applyLazyUpdate(DominatorTree::Delete, From, To);
+  DeduplicateTimer.stopTimer();
 }
 
 void DomTreeUpdater::dropOutOfDateUpdates() {
@@ -500,7 +603,9 @@ void DomTreeUpdater::dropOutOfDateUpdates() {
   const auto B = PendUpdates.begin();
   const auto E = PendUpdates.begin() + dropIndex;
   assert(B <= E && "Iterator out of range.");
+  DeduplicateTimer.startTimer();
   PendUpdates.erase(B, E);
+  DeduplicateTimer.stopTimer();
   // Calculate current index.
   PendDTUpdateIndex -= dropIndex;
   PendPDTUpdateIndex -= dropIndex;
@@ -608,4 +713,39 @@ LLVM_DUMP_METHOD void DomTreeUpdater::dump() const {
   }
 }
 #endif
+
+
+void DomTreeUpdater::applyAutoUpdates() {
+  if(!NeedCalculate)
+    return;
+  NeedCalculate=false;
+  if(SnapshotedBB!=&Func->getEntryBlock()) {
+    recalculate(*Func);
+    snapshotCFG(SnapshotedCFG);
+    return;
+  }
+  CFG CurrentCFG;
+  snapshotCFG(CurrentCFG);
+  auto Updates = diffCFG(SnapshotedCFG,CurrentCFG);
+  SnapshotedCFG=CurrentCFG;
+
+  /*auto& O=llvm::dbgs();
+    O<<"==========CFG diff==========\n";
+  for(auto& Edge:Updates){
+    if(Edge.getKind()==DominatorTree::Insert)
+      O<<"Insert:";
+    else
+      O<<"Delete:";
+    O<<" "<<Edge.getFrom()->getName()<<"->"<<Edge.getTo()->getName()<<"\n";
+  }
+      O<<"==========End diff==========\n";*/  
+  DTUApplyUpdatesTimer.startTimer();    
+  if(DT)
+    DT->applyUpdates(Updates);
+  DTUApplyUpdatesTimer.stopTimer();
+  PDTUApplyUpdatesTimer.startTimer();
+  if(PDT)
+    PDT->applyUpdates(Updates);
+  PDTUApplyUpdatesTimer.stopTimer();
+}
 } // namespace llvm

@@ -680,8 +680,7 @@ void llvm::MergeBasicBlockIntoOnlyPred(BasicBlock *DestBB,
   // DTU under Lazy UpdateStrategy update: Collect all the edges that enter
   // PredBB. These dominator edges will be redirected to DestBB.
   std::vector <DominatorTree::UpdateType> Updates;
-  if (DTU && DTU->getUpdateStrategy() == DomTreeUpdater::UpdateStrategy::Lazy &&
-      !ReplaceEntryBB) {
+  if (DTU && DTU->isLazy() && !ReplaceEntryBB) {
     Updates.reserve(1 + (2 * pred_size(PredBB)));
     Updates.push_back({DominatorTree::Delete, PredBB, DestBB});
     for (auto I = pred_begin(PredBB), E = pred_end(PredBB); I != E; ++I) {
@@ -717,7 +716,7 @@ void llvm::MergeBasicBlockIntoOnlyPred(BasicBlock *DestBB,
 
   if (DTU) {
     // Eager UpdateStrategy
-    if (DTU->getUpdateStrategy() == DomTreeUpdater::UpdateStrategy::Eager) {
+    if (DTU->isEager()) {
       // Update the DomTree
       if (DTU->hasDomTree()) {
         DominatorTree &DT = DTU->getDomTree();

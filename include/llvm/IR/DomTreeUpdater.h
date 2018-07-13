@@ -23,36 +23,56 @@
 #include "llvm/Support/GenericDomTree.h"
 #include <functional>
 #include <vector>
+#include <utility>
 
 namespace llvm {
 
 class DomTreeUpdater {
 public:
-  enum class UpdateStrategy : unsigned char { Eager = 0, Lazy = 1 };
+  enum class UpdateStrategy : unsigned char { Eager = 0, Lazy = 1, Auto = 2 };
 
   explicit DomTreeUpdater(UpdateStrategy Strategy_) : Strategy(Strategy_) {}
   DomTreeUpdater(DominatorTree &DT_, UpdateStrategy Strategy_)
-      : DT(&DT_), Strategy(Strategy_) {}
+      : DT(&DT_), Strategy(Strategy_)  {
+      if(isAuto())
+        snapshotCFG(SnapshotedCFG);
+  }
   DomTreeUpdater(DominatorTree *DT_, UpdateStrategy Strategy_)
-      : DT(DT_), Strategy(Strategy_) {}
+      : DT(DT_), Strategy(Strategy_) {
+      if(isAuto())
+          snapshotCFG(SnapshotedCFG);
+  }
   DomTreeUpdater(PostDominatorTree &PDT_, UpdateStrategy Strategy_)
-      : PDT(&PDT_), Strategy(Strategy_) {}
+      : PDT(&PDT_), Strategy(Strategy_)  {
+      if(isAuto())
+          snapshotCFG(SnapshotedCFG);
+  }
   DomTreeUpdater(PostDominatorTree *PDT_, UpdateStrategy Strategy_)
-      : PDT(PDT_), Strategy(Strategy_) {}
+      : PDT(PDT_), Strategy(Strategy_) {
+      if(isAuto())
+          snapshotCFG(SnapshotedCFG);
+  }
   DomTreeUpdater(DominatorTree &DT_, PostDominatorTree &PDT_,
                  UpdateStrategy Strategy_)
-      : DT(&DT_), PDT(&PDT_), Strategy(Strategy_) {}
+      : DT(&DT_), PDT(&PDT_), Strategy(Strategy_)  {
+      if(isAuto())
+          snapshotCFG(SnapshotedCFG);
+  }
   DomTreeUpdater(DominatorTree *DT_, PostDominatorTree *PDT_,
                  UpdateStrategy Strategy_)
-      : DT(DT_), PDT(PDT_), Strategy(Strategy_) {}
+      : DT(DT_), PDT(PDT_), Strategy(Strategy_)  {
+      if(isAuto())
+          snapshotCFG(SnapshotedCFG);
+  }
 
   ~DomTreeUpdater() { flush(); }
 
   /// Returns true if the current strategy is Lazy.
-  bool isLazy() const { return Strategy == UpdateStrategy::Lazy; };
+  bool isLazy() const { return Strategy != UpdateStrategy::Eager; };
 
   /// Returns true if the current strategy is Eager.
   bool isEager() const { return Strategy == UpdateStrategy::Eager; };
+
 
   /// Returns true if it holds a DominatorTree.
   bool hasDomTree() const { return DT != nullptr; }
@@ -213,6 +233,7 @@ private:
   bool IsRecalculatingDomTree = false;
   bool IsRecalculatingPostDomTree = false;
 
+
   /// First remove all the instructions of DelBB and then make sure DelBB has a
   /// valid terminator instruction which is necessary to have when DelBB still
   /// has to be inside of its parent Function while awaiting deletion under Lazy
@@ -253,6 +274,25 @@ private:
 
   /// Returns true if the update is self dominance.
   bool isSelfDominance(DominatorTree::UpdateType Update) const;
+
+  // Auto
+
+  using CFG=std::vector<std::pair<BasicBlock*,BasicBlock*>>;
+  // TODO:
+  void snapshotCFG(CFG& Graph);
+
+  // TODO:
+  std::vector<DominatorTree::UpdateType> diffCFG(CFG& PrevCFG, CFG& NewCFG);
+
+  bool isAuto() const {return Strategy==UpdateStrategy::Auto;}
+
+  void applyAutoUpdates();
+
+  CFG SnapshotedCFG;
+  BasicBlock* SnapshotedBB= nullptr;
+  Function* Func= nullptr;
+  bool NeedCalculate=false;
+
 };
 } // namespace llvm
 

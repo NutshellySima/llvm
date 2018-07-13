@@ -157,7 +157,7 @@ bool llvm::MergeBlockIntoPredecessor(BasicBlock *BB, DomTreeUpdater *DTU,
   // DTU under Lazy UpdateStrategy update: Collect all the edges that exit BB.
   // These dominator edges will be redirected from Pred.
   std::vector<DominatorTree::UpdateType> Updates;
-  if (DTU && DTU->getUpdateStrategy() == DomTreeUpdater::UpdateStrategy::Lazy) {
+  if (DTU && DTU->isLazy()) {
     Updates.reserve(1 + (2 * succ_size(BB)));
     Updates.push_back({DominatorTree::Delete, PredBB, BB});
     for (auto I = succ_begin(BB), E = succ_end(BB); I != E; ++I) {
@@ -204,7 +204,7 @@ bool llvm::MergeBlockIntoPredecessor(BasicBlock *BB, DomTreeUpdater *DTU,
   // Finally, erase the old block and update dominator info.
   if (DTU) {
     // DTU under Eager UpdateStrategy
-    if (DTU->getUpdateStrategy() == DomTreeUpdater::UpdateStrategy::Eager) {
+    if (DTU->isEager()) {
       // Update DomTree.
       if (DTU->hasDomTree()) {
         DominatorTree *DT = &DTU->getDomTree();
