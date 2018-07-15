@@ -88,26 +88,49 @@ bool DomTreeUpdater::isUpdateValid(
 }
 
 
-std::vector<DominatorTree::UpdateType> DomTreeUpdater::diffCFG(CFG& PrevCFG, CFG& NewCFG){
+std::vector<DominatorTree::UpdateType> DomTreeUpdater::diffCFG(){
+  auto getNewCFG=[&](BasicBlock* BB){
+    std::vector<BasicBlock*> Ret;
+    Ret.reserve(succ_size(BB));
+    for(auto* Addr:successors(BB))
+        Ret.push_back(Addr);
+    llvm::sort(Ret.begin(),Ret.end());
+    Ret.erase(std::unique(Ret.begin(),Ret.end()),Ret.end());
+    return Ret;
+  };
   DiffTimer.startTimer();
-  CFG DiffCFG;
   std::vector<DominatorTree::UpdateType> Updates;
-  std::set_difference(PrevCFG.begin(),PrevCFG.end(),NewCFG.begin(),NewCFG.end(),std::inserter(DiffCFG,DiffCFG.begin()));
-  // Deleted Edges
-  for(auto& Edge:DiffCFG)
-    if(Edge.first!=Edge.second)
-      Updates.push_back({DominatorTree::Delete,Edge.first,Edge.second});
-  DiffCFG.clear();
-  std::set_difference(NewCFG.begin(),NewCFG.end(),PrevCFG.begin(),PrevCFG.end(),std::inserter(DiffCFG,DiffCFG.begin()));
-  // Inserted Edges
-  for(auto& Edge:DiffCFG)
-    if(Edge.first!=Edge.second)
-      Updates.push_back({DominatorTree::Insert,Edge.first,Edge.second});
-  DiffTimer.stopTimer();  
+  std::vector<BasicBlock*>DiffCFG;
+  llvm::sort(PendPoints.begin(),PendPoints.end());
+  PendPoints.erase(std::unique(PendPoints.begin(),PendPoints.end()),PendPoints.end());
+
+  for(auto&Point:PendPoints) {
+    auto& PrevCFG=SnapshotedCFG[Point];
+    auto NewCFG=getNewCFG(Point);
+    std::set_difference(PrevCFG.begin(), PrevCFG.end(), NewCFG.begin(), NewCFG.end(),
+                        std::inserter(DiffCFG, DiffCFG.begin()));
+    // Deleted Edges
+    for (auto &Edge:DiffCFG)
+      if (Point != Edge)
+          Updates.push_back({DominatorTree::Delete, Point, Edge});
+    DiffCFG.clear();
+    std::set_difference(NewCFG.begin(), NewCFG.end(), PrevCFG.begin(), PrevCFG.end(),
+                        std::inserter(DiffCFG, DiffCFG.begin()));
+    // Inserted Edges
+    for (auto &Edge:DiffCFG)
+      if (Point != Edge)
+          Updates.push_back({DominatorTree::Insert, Point, Edge});
+    SnapshotedCFG[Point]=NewCFG;
+    DiffCFG.clear();
+  }
+  PendPoints.clear();
+  DiffTimer.stopTimer();
+
   return Updates;
 }
 
 void DomTreeUpdater::snapshotCFG(CFG& Graph) {
+  Graph.clear();
   if(!Func){
     if(DT)
       Func=&*DT->getRoot()->getParent();
@@ -116,15 +139,16 @@ void DomTreeUpdater::snapshotCFG(CFG& Graph) {
   }
   SnapshotedBB=&Func->getEntryBlock();
   SnapshotTimer.startTimer();
-  Graph.clear();
-  for(BasicBlock& BB:Func->getBasicBlockList())
-      for(auto* Addr:successors(&BB))
-          Graph.push_back(std::make_pair(&BB,Addr));
-  llvm::sort(Graph.begin(),Graph.end());
-#ifndef NDEBUG
-  assert(std::is_sorted(Graph.begin(),Graph.end()));
-#endif
-  Graph.erase(std::unique(Graph.begin(),Graph.end()),Graph.end());
+  for(BasicBlock& BB:Func->getBasicBlockList()) {
+      auto& I=Graph[&BB];
+      I.reserve(succ_size(&BB));
+      for (auto *Addr:successors(&BB))
+          I.push_back(Addr);
+  }
+  for(auto& Point:Graph) {
+    llvm::sort(Point.second.begin(), Point.second.end());
+    Point.second.erase(std::unique(Point.second.begin(), Point.second.end()), Point.second.end());
+  }
   SnapshotTimer.stopTimer();
 }
 
@@ -291,6 +315,7 @@ bool DomTreeUpdater::recalculate(Function &F) {
     dropOutOfDateUpdates();
     if(isAuto()) {
       snapshotCFG(SnapshotedCFG);
+      PendPoints.clear();
       NeedCalculate=false;
     }
     return true;
@@ -367,6 +392,9 @@ void DomTreeUpdater::eraseDelBBNode(BasicBlock *DelBB) {
   if (PDT && !IsRecalculatingPostDomTree)
     if (PDT->getNode(DelBB))
       PDT->eraseNode(DelBB);
+
+  if(isAuto())
+      SnapshotedCFG.erase(DelBB);
 }
 
 void DomTreeUpdater::validateDeleteBB(BasicBlock *DelBB) {
@@ -393,6 +421,8 @@ void DomTreeUpdater::applyUpdates(ArrayRef<DominatorTree::UpdateType> Updates,
 
   if(isAuto()) {
     NeedCalculate=true;
+    for(auto& Update:Updates)
+        PendPoints.push_back(Update.getFrom());
     return;
   }
 
@@ -462,6 +492,7 @@ void DomTreeUpdater::insertEdge(BasicBlock *From, BasicBlock *To) {
 
   if(isAuto()) {
     NeedCalculate=true;
+    PendPoints.push_back(From);
     return;
   }
 
@@ -502,6 +533,7 @@ void DomTreeUpdater::insertEdgeRelaxed(BasicBlock *From, BasicBlock *To) {
 
   if(isAuto()) {
     NeedCalculate=true;
+    PendPoints.push_back(From);
     return;
   }
 
@@ -528,6 +560,7 @@ void DomTreeUpdater::deleteEdge(BasicBlock *From, BasicBlock *To) {
 
   if(isAuto()) {
     NeedCalculate=true;
+    PendPoints.push_back(From);
     return;
   }
 #ifndef NDEBUG
@@ -547,10 +580,10 @@ void DomTreeUpdater::deleteEdge(BasicBlock *From, BasicBlock *To) {
     if (DT)
       DT->deleteEdge(From, To);
     DTUDeleteEdgeTimer.stopTimer();
-    PDTDeleteEdgeTimer.startTimer();
+    PDTUDeleteEdgeTimer.startTimer();
     if (PDT)
       PDT->deleteEdge(From, To);
-    PDTDeleteEdgeTimer.stopTimer();
+    PDTUDeleteEdgeTimer.stopTimer();
     return;
   }
   applyLazyUpdate(DominatorTree::Delete, From, To);
@@ -565,6 +598,7 @@ void DomTreeUpdater::deleteEdgeRelaxed(BasicBlock *From, BasicBlock *To) {
 
   if(isAuto()) {
     NeedCalculate=true;
+    PendPoints.push_back(From);
     return;
   }
 
@@ -593,6 +627,9 @@ void DomTreeUpdater::dropOutOfDateUpdates() {
 
   tryFlushDeletedBB();
 
+
+  if(isAuto())
+      return;
   // Drop all updates applied by both trees.
   if (!DT)
     PendDTUpdateIndex = PendUpdates.size();
@@ -718,27 +755,12 @@ LLVM_DUMP_METHOD void DomTreeUpdater::dump() const {
 void DomTreeUpdater::applyAutoUpdates() {
   if(!NeedCalculate)
     return;
-  NeedCalculate=false;
   if(SnapshotedBB!=&Func->getEntryBlock()) {
     recalculate(*Func);
-    snapshotCFG(SnapshotedCFG);
     return;
   }
-  CFG CurrentCFG;
-  snapshotCFG(CurrentCFG);
-  auto Updates = diffCFG(SnapshotedCFG,CurrentCFG);
-  SnapshotedCFG=CurrentCFG;
-
-  /*auto& O=llvm::dbgs();
-    O<<"==========CFG diff==========\n";
-  for(auto& Edge:Updates){
-    if(Edge.getKind()==DominatorTree::Insert)
-      O<<"Insert:";
-    else
-      O<<"Delete:";
-    O<<" "<<Edge.getFrom()->getName()<<"->"<<Edge.getTo()->getName()<<"\n";
-  }
-      O<<"==========End diff==========\n";*/  
+  NeedCalculate=false;
+  auto Updates = diffCFG();
   DTUApplyUpdatesTimer.startTimer();    
   if(DT)
     DT->applyUpdates(Updates);

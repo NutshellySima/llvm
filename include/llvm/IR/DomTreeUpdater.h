@@ -21,6 +21,7 @@
 #include "llvm/IR/Instructions.h"
 #include "llvm/IR/ValueHandle.h"
 #include "llvm/Support/GenericDomTree.h"
+#include "llvm/ADT/DenseMap.h"
 #include <functional>
 #include <vector>
 #include <utility>
@@ -65,7 +66,11 @@ public:
           snapshotCFG(SnapshotedCFG);
   }
 
-  ~DomTreeUpdater() { flush(); }
+  ~DomTreeUpdater() {
+      if(isAuto())
+          assert(PendUpdates.empty());
+      flush();
+  }
 
   /// Returns true if the current strategy is Lazy.
   bool isLazy() const { return Strategy != UpdateStrategy::Eager; };
@@ -277,12 +282,12 @@ private:
 
   // Auto
 
-  using CFG=std::vector<std::pair<BasicBlock*,BasicBlock*>>;
-  // TODO:
+  using CFG=DenseMap<BasicBlock*,std::vector<BasicBlock*>>;
+  // TODO: Full
   void snapshotCFG(CFG& Graph);
 
   // TODO:
-  std::vector<DominatorTree::UpdateType> diffCFG(CFG& PrevCFG, CFG& NewCFG);
+  std::vector<DominatorTree::UpdateType> diffCFG();
 
   bool isAuto() const {return Strategy==UpdateStrategy::Auto;}
 
@@ -293,6 +298,7 @@ private:
   Function* Func= nullptr;
   bool NeedCalculate=false;
 
+  std::vector<BasicBlock*>PendPoints;
 };
 } // namespace llvm
 

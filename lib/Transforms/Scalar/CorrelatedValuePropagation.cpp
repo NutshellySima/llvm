@@ -309,7 +309,7 @@ static bool processCmp(CmpInst *C, LazyValueInfo *LVI) {
 /// a case fires on every incoming edge then the entire switch can be removed
 /// and replaced with a branch to the case destination.
 static bool processSwitch(SwitchInst *SI, LazyValueInfo *LVI, DominatorTree *DT) {
-  DomTreeUpdater DTU(*DT, DomTreeUpdater::UpdateStrategy::Lazy);
+  DomTreeUpdater DTU(*DT, DomTreeUpdater::UpdateStrategy::Auto);
   Value *Cond = SI->getCondition();
   BasicBlock *BB = SI->getParent();
 
