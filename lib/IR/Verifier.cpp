@@ -76,6 +76,7 @@
 #include "llvm/IR/DebugInfoMetadata.h"
 #include "llvm/IR/DebugLoc.h"
 #include "llvm/IR/DerivedTypes.h"
+#include "llvm/IR/DomTreeUpdater.h"
 #include "llvm/IR/Dominators.h"
 #include "llvm/IR/Function.h"
 #include "llvm/IR/GlobalAlias.h"
@@ -329,7 +330,8 @@ public:
     // this code outside of a pass manager.
     // FIXME: It's really gross that we have to cast away constness here.
     if (!F.empty())
-      DT.recalculate(const_cast<Function &>(F));
+      DomTreeUpdater(DT, DomTreeUpdater::UpdateStrategy::Eager)
+          .recalculate(const_cast<Function &>(F));
 
     for (const BasicBlock &BB : F) {
       if (!BB.empty() && BB.back().isTerminator())

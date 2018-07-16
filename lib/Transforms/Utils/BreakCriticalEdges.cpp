@@ -24,6 +24,7 @@
 #include "llvm/Analysis/CFG.h"
 #include "llvm/Analysis/LoopInfo.h"
 #include "llvm/IR/CFG.h"
+#include "llvm/IR/DomTreeUpdater.h"
 #include "llvm/IR/Dominators.h"
 #include "llvm/IR/Instructions.h"
 #include "llvm/IR/Type.h"
@@ -217,7 +218,8 @@ llvm::SplitCriticalEdge(TerminatorInst *TI, unsigned SuccNum,
     if (llvm::find(successors(TIBB), DestBB) == succ_end(TIBB))
       Updates.push_back({DominatorTree::Delete, TIBB, DestBB});
 
-    DT->applyUpdates(Updates);
+    DomTreeUpdater(*DT, DomTreeUpdater::UpdateStrategy::Eager)
+        .applyUpdates(Updates);
   }
 
   // Update LoopInfo if it is around.

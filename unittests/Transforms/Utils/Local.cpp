@@ -8,9 +8,11 @@
 //===----------------------------------------------------------------------===//
 
 #include "llvm/Transforms/Utils/Local.h"
+#include "llvm/Analysis/PostDominators.h"
 #include "llvm/AsmParser/Parser.h"
 #include "llvm/IR/BasicBlock.h"
 #include "llvm/IR/DIBuilder.h"
+#include "llvm/IR/DomTreeUpdater.h"
 #include "llvm/IR/IRBuilder.h"
 #include "llvm/IR/Instructions.h"
 #include "llvm/IR/IntrinsicInst.h"
@@ -176,9 +178,10 @@ static void runWithDomTree(
 
 TEST(Local, MergeBasicBlockIntoOnlyPred) {
   LLVMContext C;
-
-  std::unique_ptr<Module> M = parseIR(C,
-                                      R"(
+  std::unique_ptr<Module> M;
+  auto resetIR = [&]() {
+    M = parseIR(C,
+                R"(
       define i32 @f(i8* %str) {
       entry:
         br label %bb2.i
@@ -195,18 +198,43 @@ TEST(Local, MergeBasicBlockIntoOnlyPred) {
         ret i32 0
       }
       )");
-  runWithDomTree(
-      *M, "f", [&](Function &F, DominatorTree *DT) {
-        for (Function::iterator I = F.begin(), E = F.end(); I != E;) {
-          BasicBlock *BB = &*I++;
-          BasicBlock *SinglePred = BB->getSinglePredecessor();
-          if (!SinglePred || SinglePred == BB || BB->hasAddressTaken()) continue;
-          BranchInst *Term = dyn_cast<BranchInst>(SinglePred->getTerminator());
-          if (Term && !Term->isConditional())
-            MergeBasicBlockIntoOnlyPred(BB, DT);
-        }
-        EXPECT_TRUE(DT->verify());
-      });
+  };
+
+  // Test MergeBasicBlockIntoOnlyPred working under Eager UpdateStrategy.
+  resetIR();
+  runWithDomTree(*M, "f", [&](Function &F, DominatorTree *DT) {
+    PostDominatorTree PDT = PostDominatorTree(F);
+    DomTreeUpdater DTU(*DT, PDT, DomTreeUpdater::UpdateStrategy::Eager);
+    for (Function::iterator I = F.begin(), E = F.end(); I != E;) {
+      BasicBlock *BB = &*I++;
+      BasicBlock *SinglePred = BB->getSinglePredecessor();
+      if (!SinglePred || SinglePred == BB || BB->hasAddressTaken())
+        continue;
+      BranchInst *Term = dyn_cast<BranchInst>(SinglePred->getTerminator());
+      if (Term && !Term->isConditional())
+        MergeBasicBlockIntoOnlyPred(BB, &DTU);
+    }
+    EXPECT_TRUE(DT->verify());
+    EXPECT_TRUE(PDT.verify());
+  });
+
+  // Test MergeBasicBlockIntoOnlyPred working under Lazy UpdateStrategy.
+  resetIR();
+  runWithDomTree(*M, "f", [&](Function &F, DominatorTree *DT) {
+    PostDominatorTree PDT = PostDominatorTree(F);
+    DomTreeUpdater DTU(*DT, PDT, DomTreeUpdater::UpdateStrategy::Lazy);
+    for (Function::iterator I = F.begin(), E = F.end(); I != E;) {
+      BasicBlock *BB = &*I++;
+      BasicBlock *SinglePred = BB->getSinglePredecessor();
+      if (!SinglePred || SinglePred == BB || BB->hasAddressTaken())
+        continue;
+      BranchInst *Term = dyn_cast<BranchInst>(SinglePred->getTerminator());
+      if (Term && !Term->isConditional())
+        MergeBasicBlockIntoOnlyPred(BB, &DTU);
+    }
+    EXPECT_TRUE(DTU.getDomTree().verify());
+    EXPECT_TRUE(DTU.getPostDomTree().verify());
+  });
 }
 
 TEST(Local, ConstantFoldTerminator) {
@@ -310,27 +338,55 @@ TEST(Local, ConstantFoldTerminator) {
       }
         )");
 
-  auto CFAllTerminators = [&](Function &F, DominatorTree *DT) {
-    DeferredDominance DDT(*DT);
+  auto CFAllTerminatorsEager = [&](Function &F, DominatorTree *DT) {
+    PostDominatorTree PDT = PostDominatorTree(F);
+    DomTreeUpdater DTU(*DT, PDT, DomTreeUpdater::UpdateStrategy::Eager);
     for (Function::iterator I = F.begin(), E = F.end(); I != E;) {
       BasicBlock *BB = &*I++;
-      ConstantFoldTerminator(BB, true, nullptr, &DDT);
+      ConstantFoldTerminator(BB, true, nullptr, &DTU);
     }
 
-    EXPECT_TRUE(DDT.flush().verify());
+    EXPECT_TRUE(DTU.getDomTree().verify());
+    EXPECT_TRUE(DTU.getPostDomTree().verify());
   };
 
-  runWithDomTree(*M, "br_same_dest", CFAllTerminators);
-  runWithDomTree(*M, "br_different_dest", CFAllTerminators);
-  runWithDomTree(*M, "switch_2_different_dest", CFAllTerminators);
-  runWithDomTree(*M, "switch_2_different_dest_default", CFAllTerminators);
-  runWithDomTree(*M, "switch_3_different_dest", CFAllTerminators);
-  runWithDomTree(*M, "switch_variable_2_default_dest", CFAllTerminators);
-  runWithDomTree(*M, "switch_constant_2_default_dest", CFAllTerminators);
-  runWithDomTree(*M, "switch_constant_3_repeated_dest", CFAllTerminators);
-  runWithDomTree(*M, "indirectbr", CFAllTerminators);
-  runWithDomTree(*M, "indirectbr_repeated", CFAllTerminators);
-  runWithDomTree(*M, "indirectbr_unreachable", CFAllTerminators);
+  auto CFAllTerminatorsLazy = [&](Function &F, DominatorTree *DT) {
+    PostDominatorTree PDT = PostDominatorTree(F);
+    DomTreeUpdater DTU(*DT, PDT, DomTreeUpdater::UpdateStrategy::Lazy);
+    for (Function::iterator I = F.begin(), E = F.end(); I != E;) {
+      BasicBlock *BB = &*I++;
+      ConstantFoldTerminator(BB, true, nullptr, &DTU);
+    }
+
+    EXPECT_TRUE(DTU.getDomTree().verify());
+    EXPECT_TRUE(DTU.getPostDomTree().verify());
+  };
+
+  // Test ConstantFoldTerminator under Eager UpdateStrategy.
+  runWithDomTree(*M, "br_same_dest", CFAllTerminatorsEager);
+  runWithDomTree(*M, "br_different_dest", CFAllTerminatorsEager);
+  runWithDomTree(*M, "switch_2_different_dest", CFAllTerminatorsEager);
+  runWithDomTree(*M, "switch_2_different_dest_default", CFAllTerminatorsEager);
+  runWithDomTree(*M, "switch_3_different_dest", CFAllTerminatorsEager);
+  runWithDomTree(*M, "switch_variable_2_default_dest", CFAllTerminatorsEager);
+  runWithDomTree(*M, "switch_constant_2_default_dest", CFAllTerminatorsEager);
+  runWithDomTree(*M, "switch_constant_3_repeated_dest", CFAllTerminatorsEager);
+  runWithDomTree(*M, "indirectbr", CFAllTerminatorsEager);
+  runWithDomTree(*M, "indirectbr_repeated", CFAllTerminatorsEager);
+  runWithDomTree(*M, "indirectbr_unreachable", CFAllTerminatorsEager);
+
+  // Test ConstantFoldTerminator under Lazy UpdateStrategy.
+  runWithDomTree(*M, "br_same_dest", CFAllTerminatorsLazy);
+  runWithDomTree(*M, "br_different_dest", CFAllTerminatorsLazy);
+  runWithDomTree(*M, "switch_2_different_dest", CFAllTerminatorsLazy);
+  runWithDomTree(*M, "switch_2_different_dest_default", CFAllTerminatorsLazy);
+  runWithDomTree(*M, "switch_3_different_dest", CFAllTerminatorsLazy);
+  runWithDomTree(*M, "switch_variable_2_default_dest", CFAllTerminatorsLazy);
+  runWithDomTree(*M, "switch_constant_2_default_dest", CFAllTerminatorsLazy);
+  runWithDomTree(*M, "switch_constant_3_repeated_dest", CFAllTerminatorsLazy);
+  runWithDomTree(*M, "indirectbr", CFAllTerminatorsLazy);
+  runWithDomTree(*M, "indirectbr_repeated", CFAllTerminatorsLazy);
+  runWithDomTree(*M, "indirectbr_unreachable", CFAllTerminatorsLazy);
 }
 
 struct SalvageDebugInfoTest : ::testing::Test {

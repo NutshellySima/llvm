@@ -27,6 +27,7 @@
 #include "llvm/IR/BasicBlock.h"
 #include "llvm/IR/DataLayout.h"
 #include "llvm/IR/DebugInfoMetadata.h"
+#include "llvm/IR/DomTreeUpdater.h"
 #include "llvm/IR/Dominators.h"
 #include "llvm/IR/IntrinsicInst.h"
 #include "llvm/IR/LLVMContext.h"
@@ -500,7 +501,8 @@ llvm::UnrollAndJamLoop(Loop *L, unsigned Count, unsigned TripCount,
                            ForeBlocksLast.back(), SubLoopBlocksFirst[0]);
     DTUpdates.emplace_back(DominatorTree::UpdateKind::Insert,
                            SubLoopBlocksLast.back(), AftBlocksFirst[0]);
-    DT->applyUpdates(DTUpdates);
+    DomTreeUpdater(DT, DomTreeUpdater::UpdateStrategy::Eager)
+        .applyUpdates(DTUpdates);
   }
 
   // Merge adjacent basic blocks, if possible.

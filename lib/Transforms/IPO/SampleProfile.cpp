@@ -46,6 +46,7 @@
 #include "llvm/IR/DebugInfoMetadata.h"
 #include "llvm/IR/DebugLoc.h"
 #include "llvm/IR/DiagnosticInfo.h"
+#include "llvm/IR/DomTreeUpdater.h"
 #include "llvm/IR/Dominators.h"
 #include "llvm/IR/Function.h"
 #include "llvm/IR/GlobalValue.h"
@@ -1379,9 +1380,10 @@ unsigned SampleProfileLoader::getFunctionLoc(Function &F) {
 
 void SampleProfileLoader::computeDominanceAndLoopInfo(Function &F) {
   DT.reset(new DominatorTree);
-  DT->recalculate(F);
 
-  PDT.reset(new PostDominatorTree(F));
+  PDT.reset(new PostDominatorTree);
+  DomTreeUpdater(*DT, *PDT, DomTreeUpdater::UpdateStrategy::Eager)
+      .recalculate(F);
 
   LI.reset(new LoopInfo);
   LI->analyze(*DT);

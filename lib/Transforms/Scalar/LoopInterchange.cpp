@@ -26,6 +26,7 @@
 #include "llvm/IR/BasicBlock.h"
 #include "llvm/IR/Constants.h"
 #include "llvm/IR/DiagnosticInfo.h"
+#include "llvm/IR/DomTreeUpdater.h"
 #include "llvm/IR/Dominators.h"
 #include "llvm/IR/Function.h"
 #include "llvm/IR/InstrTypes.h"
@@ -1441,7 +1442,8 @@ bool LoopInterchangeTransform::adjustLoopBranches() {
 
   updateIncomingBlock(OuterLoopLatchSuccessor, OuterLoopLatch, InnerLoopLatch);
 
-  DT->applyUpdates(DTUpdates);
+  DomTreeUpdater(*DT, DomTreeUpdater::UpdateStrategy::Eager)
+      .applyUpdates(DTUpdates);
   restructureLoops(OuterLoop, InnerLoop, InnerLoopPreHeader,
                    OuterLoopPreHeader);
 

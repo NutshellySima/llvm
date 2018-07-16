@@ -39,6 +39,7 @@
 #include "llvm/ADT/DepthFirstIterator.h"
 #include "llvm/ADT/PointerIntPair.h"
 #include "llvm/ADT/SmallPtrSet.h"
+#include "llvm/ADT/Statistic.h"
 #include "llvm/Support/Debug.h"
 #include "llvm/Support/GenericDomTree.h"
 
@@ -46,6 +47,72 @@
 
 namespace llvm {
 namespace DomTreeBuilder {
+
+    struct StatsHolder;
+
+    inline StatsHolder *&GetDomTreeBuilderStats() {
+      static StatsHolder *StatsPtr = nullptr;
+      return StatsPtr;
+    }
+
+    struct StatsHolder {
+        Statistic &NumDomRecalculated;
+        Statistic &NumPostDomRecalculated;
+        Statistic &NumDomInserted;
+        Statistic &NumPostDomInserted;
+        Statistic &NumDomDeleted;
+        Statistic &NumPostDomDeleted;
+        Statistic &NumDomVisited;
+        Statistic &NumPostDomVisited;
+
+        StatsHolder(Statistic &DomRecalculated,
+                    Statistic &PostDomRecalculated,
+                    Statistic &DomInserted,
+                    Statistic &PostDomInserted,
+                    Statistic &DomDeleted,
+                    Statistic &PostDomDeleted,
+                    Statistic &DomVisited,
+                    Statistic &PostDomVisited)
+                : NumDomRecalculated(DomRecalculated),
+                  NumPostDomRecalculated(PostDomRecalculated),
+                  NumDomInserted(DomInserted),
+                  NumPostDomInserted(PostDomInserted),
+                  NumDomDeleted(DomDeleted),
+                  NumPostDomDeleted(PostDomDeleted),
+                  NumDomVisited(DomVisited),
+                  NumPostDomVisited(PostDomVisited) {
+
+          DomTreeBuilder::GetDomTreeBuilderStats() = this;
+        }
+
+        static void IncNumRecalculated(bool IsPostDom) {
+          StatsHolder *SH = GetDomTreeBuilderStats();
+          if (!SH) return;
+          if (!IsPostDom) ++(SH->NumDomRecalculated);
+          else ++SH->NumPostDomRecalculated;
+        }
+
+        static void IncNumInsertions(bool IsPostDom) {
+          StatsHolder *SH = GetDomTreeBuilderStats();
+          if (!SH) return;
+          if (!IsPostDom) ++SH->NumDomInserted;
+          else ++SH->NumPostDomInserted;
+        }
+
+        static void IncNumDeletions(bool IsPostDom) {
+          StatsHolder *SH = GetDomTreeBuilderStats();
+          if (!SH) return;
+          if (!IsPostDom) ++SH->NumDomDeleted;
+          else ++SH->NumPostDomDeleted;
+        }
+
+        static void IncNumNodesVisited(bool IsPostDom, unsigned K) {
+          StatsHolder *SH = GetDomTreeBuilderStats();
+          if (!SH) return;
+          if (!IsPostDom) SH->NumDomVisited += K;
+          else SH->NumPostDomVisited += K;
+        }
+    };
 
 template <typename DomTreeT>
 struct SemiNCAInfo {
@@ -219,6 +286,8 @@ struct SemiNCAInfo {
     SmallVector<NodePtr, 64> WorkList = {V};
     if (NodeToInfo.count(V) != 0) NodeToInfo[V].Parent = AttachToNum;
 
+    const unsigned StartNum = LastNum;
+
     while (!WorkList.empty()) {
       const NodePtr BB = WorkList.pop_back_val();
       auto &BBInfo = NodeToInfo[BB];
@@ -239,7 +308,8 @@ struct SemiNCAInfo {
           if (Succ != BB) SIT->second.ReverseChildren.push_back(BB);
           continue;
         }
-
+        LLVM_DEBUG(dbgs() << "[DFS]\t" << BlockNamePrinter(BB) << " -> "
+                     << BlockNamePrinter(Succ) << "\n");
         if (!Condition(BB, Succ)) continue;
 
         // It's fine to add Succ to the map, because we know that it will be
@@ -250,7 +320,7 @@ struct SemiNCAInfo {
         SuccInfo.ReverseChildren.push_back(BB);
       }
     }
-
+    StatsHolder::IncNumNodesVisited(IsPostDom, LastNum - StartNum);
     return LastNum;
   }
 
@@ -551,6 +621,7 @@ struct SemiNCAInfo {
   }
 
   static void CalculateFromScratch(DomTreeT &DT, BatchUpdatePtr BUI) {
+    StatsHolder::IncNumRecalculated(IsPostDom);
     auto *Parent = DT.Parent;
     DT.reset();
     DT.Parent = Parent;
@@ -638,6 +709,7 @@ struct SemiNCAInfo {
 
   static void InsertEdge(DomTreeT &DT, const BatchUpdatePtr BUI,
                          const NodePtr From, const NodePtr To) {
+    StatsHolder::IncNumInsertions(IsPostDom);
     assert((From || IsPostDom) &&
            "From has to be a valid CFG node or a virtual root");
     assert(To && "Cannot be a nullptr");
@@ -913,6 +985,7 @@ struct SemiNCAInfo {
 
   static void DeleteEdge(DomTreeT &DT, const BatchUpdatePtr BUI,
                          const NodePtr From, const NodePtr To) {
+    StatsHolder::IncNumDeletions(IsPostDom);
     assert(From && To && "Cannot disconnect nullptrs");
     LLVM_DEBUG(dbgs() << "Deleting edge " << BlockNamePrinter(From) << " -> "
                       << BlockNamePrinter(To) << "\n");
@@ -1254,8 +1327,12 @@ struct SemiNCAInfo {
 
     llvm::sort(Result.begin(), Result.end(),
                [&Operations](const UpdateT &A, const UpdateT &B) {
-                 return Operations[{A.getFrom(), A.getTo()}] >
-                        Operations[{B.getFrom(), B.getTo()}];
+                   const int AVal = Operations[{A.getFrom(), A.getTo()}];
+                   const int BVal = Operations[{B.getFrom(), B.getTo()}];
+                   const auto AKind = 1 - static_cast<unsigned char>(A.getKind());
+                   const auto BKind = 1 - static_cast<unsigned char>(B.getKind());
+
+                   return std::tie(AKind, AVal) > std::tie(BKind, BVal);
                });
   }
 

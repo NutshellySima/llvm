@@ -20,11 +20,12 @@
 #include "llvm/Analysis/CFG.h"
 #include "llvm/Analysis/LoopInfo.h"
 #include "llvm/Analysis/MemoryDependenceAnalysis.h"
-#include "llvm/Transforms/Utils/Local.h"
+#include "llvm/Analysis/PostDominators.h"
 #include "llvm/IR/BasicBlock.h"
 #include "llvm/IR/CFG.h"
 #include "llvm/IR/Constants.h"
 #include "llvm/IR/DebugInfoMetadata.h"
+#include "llvm/IR/DomTreeUpdater.h"
 #include "llvm/IR/Dominators.h"
 #include "llvm/IR/Function.h"
 #include "llvm/IR/InstrTypes.h"
@@ -37,6 +38,7 @@
 #include "llvm/IR/Value.h"
 #include "llvm/IR/ValueHandle.h"
 #include "llvm/Support/Casting.h"
+#include "llvm/Transforms/Utils/Local.h"
 #include <cassert>
 #include <cstdint>
 #include <string>
@@ -45,7 +47,7 @@
 
 using namespace llvm;
 
-void llvm::DeleteDeadBlock(BasicBlock *BB, DeferredDominance *DDT) {
+void llvm::DeleteDeadBlock(BasicBlock *BB, DomTreeUpdater *DTU) {
   assert((pred_begin(BB) == pred_end(BB) ||
          // Can delete self loop.
          BB->getSinglePredecessor() == BB) && "Block is not dead!");
@@ -54,11 +56,11 @@ void llvm::DeleteDeadBlock(BasicBlock *BB, DeferredDominance *DDT) {
 
   // Loop through all of our successors and make sure they know that one
   // of their predecessors is going away.
-  if (DDT)
+  if (DTU)
     Updates.reserve(BBTerm->getNumSuccessors());
   for (BasicBlock *Succ : BBTerm->successors()) {
     Succ->removePredecessor(BB);
-    if (DDT)
+    if (DTU)
       Updates.push_back({DominatorTree::Delete, BB, Succ});
   }
 
@@ -75,9 +77,9 @@ void llvm::DeleteDeadBlock(BasicBlock *BB, DeferredDominance *DDT) {
     BB->getInstList().pop_back();
   }
 
-  if (DDT) {
-    DDT->applyUpdates(Updates);
-    DDT->deleteBB(BB); // Deferred deletion of BB.
+  if (DTU) {
+    DTU->applyUpdates(Updates, /*ForceRemoveDuplicates*/ true);
+    DTU->deleteBB(BB); // Deferred deletion of BB.
   } else {
     BB->eraseFromParent(); // Zap the block!
   }
@@ -115,11 +117,9 @@ bool llvm::DeleteDeadPHIs(BasicBlock *BB, const TargetLibraryInfo *TLI) {
   return Changed;
 }
 
-bool llvm::MergeBlockIntoPredecessor(BasicBlock *BB, DominatorTree *DT,
+bool llvm::MergeBlockIntoPredecessor(BasicBlock *BB, DomTreeUpdater *DTU,
                                      LoopInfo *LI,
-                                     MemoryDependenceResults *MemDep,
-                                     DeferredDominance *DDT) {
-  assert(!(DT && DDT) && "Cannot call with both DT and DDT.");
+                                     MemoryDependenceResults *MemDep) {
 
   if (BB->hasAddressTaken())
     return false;
@@ -154,10 +154,10 @@ bool llvm::MergeBlockIntoPredecessor(BasicBlock *BB, DominatorTree *DT,
     FoldSingleEntryPHINodes(BB, MemDep);
   }
 
-  // Deferred DT update: Collect all the edges that exit BB. These
-  // dominator edges will be redirected from Pred.
+  // DTU under Lazy UpdateStrategy update: Collect all the edges that exit BB.
+  // These dominator edges will be redirected from Pred.
   std::vector<DominatorTree::UpdateType> Updates;
-  if (DDT) {
+  if (DTU && DTU->isLazy()) {
     Updates.reserve(1 + (2 * succ_size(BB)));
     Updates.push_back({DominatorTree::Delete, PredBB, BB});
     for (auto I = succ_begin(BB), E = succ_end(BB); I != E; ++I) {
@@ -195,28 +195,48 @@ bool llvm::MergeBlockIntoPredecessor(BasicBlock *BB, DominatorTree *DT,
   if (!PredBB->hasName())
     PredBB->takeName(BB);
 
-  // Finally, erase the old block and update dominator info.
-  if (DT)
-    if (DomTreeNode *DTN = DT->getNode(BB)) {
-      DomTreeNode *PredDTN = DT->getNode(PredBB);
-      SmallVector<DomTreeNode *, 8> Children(DTN->begin(), DTN->end());
-      for (DomTreeNode *DI : Children)
-        DT->changeImmediateDominator(DI, PredDTN);
-
-      DT->eraseNode(BB);
-    }
-
   if (LI)
     LI->removeBlock(BB);
 
   if (MemDep)
     MemDep->invalidateCachedPredecessors();
 
-  if (DDT) {
-    DDT->deleteBB(BB); // Deferred deletion of BB.
-    DDT->applyUpdates(Updates);
-  } else {
-    BB->eraseFromParent(); // Nuke BB.
+  // Finally, erase the old block and update dominator info.
+  if (DTU) {
+    // DTU under Eager UpdateStrategy
+    if (DTU->isEager()) {
+      // Update DomTree.
+      if (DTU->hasDomTree()) {
+        DominatorTree *DT = &DTU->getDomTree();
+        if (DomTreeNode *DTN = DT->getNode(BB)) {
+          DomTreeNode *PredDTN = DT->getNode(PredBB);
+          SmallVector<DomTreeNode *, 8> Children(DTN->begin(), DTN->end());
+          for (DomTreeNode *DI : Children)
+            DT->changeImmediateDominator(DI, PredDTN);
+        }
+      }
+
+      // Update PostDomTree.
+      if (DTU->hasPostDomTree()) {
+        PostDominatorTree *PDT = &DTU->getPostDomTree();
+        if (DomTreeNode *PDTN = PDT->getNode(BB)) {
+          BasicBlock *BBIDom = PDTN->getIDom()->getBlock();
+          PDT->changeImmediateDominator(PredBB, BBIDom);
+        }
+      }
+    }
+
+    // DTU under Lazy UpdateStrategy
+    else {
+      DTU->applyUpdates(Updates);
+    }
+
+    // Delete BB under Eager/Lazy strategy.
+    DTU->deleteBB(BB);
+  }
+
+  else {
+    BB->eraseFromParent(); // Nuke BB if DTU is nullptr.
   }
   return true;
 }

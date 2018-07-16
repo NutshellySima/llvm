@@ -28,6 +28,7 @@
 #include "llvm/IR/BasicBlock.h"
 #include "llvm/IR/Constant.h"
 #include "llvm/IR/Constants.h"
+#include "llvm/IR/DomTreeUpdater.h"
 #include "llvm/IR/Dominators.h"
 #include "llvm/IR/Function.h"
 #include "llvm/IR/InstrTypes.h"
@@ -458,10 +459,11 @@ static bool unswitchTrivialBranch(Loop &L, BranchInst &BI, DominatorTree &DT,
     rewritePHINodesForExitAndUnswitchedBlocks(*LoopExitBB, *UnswitchedBB,
                                               *ParentBB, *OldPH, FullUnswitch);
 
+  DomTreeUpdater DTU(DT, DomTreeUpdater::UpdateStrategy::Eager);
   // Now we need to update the dominator tree.
-  DT.insertEdge(OldPH, UnswitchedBB);
+  DTU.insertEdge(OldPH, UnswitchedBB);
   if (FullUnswitch)
-    DT.deleteEdge(ParentBB, UnswitchedBB);
+    DTU.deleteEdge(ParentBB, UnswitchedBB);
 
   // The constant we can replace all of our invariants with inside the loop
   // body. If any of the invariants have a value other than this the loop won't
@@ -728,7 +730,8 @@ static bool unswitchTrivialSwitch(Loop &L, SwitchInst &SI, DominatorTree &DT,
     DTUpdates.push_back({DT.Delete, ParentBB, UnswitchedBB});
     DTUpdates.push_back({DT.Insert, OldPH, UnswitchedBB});
   }
-  DT.applyUpdates(DTUpdates);
+  DomTreeUpdater(DT, DomTreeUpdater::UpdateStrategy::Eager)
+      .applyUpdates(DTUpdates);
   assert(DT.verify(DominatorTree::VerificationLevel::Fast));
 
   // We may have changed the nesting relationship for this loop so hoist it to
@@ -1999,7 +2002,8 @@ static bool unswitchNontrivialInvariants(
   }
 
   // Apply the updates accumulated above to get an up-to-date dominator tree.
-  DT.applyUpdates(DTUpdates);
+  DomTreeUpdater(DT, DomTreeUpdater::UpdateStrategy::Eager)
+      .applyUpdates(DTUpdates);
 
   // Now that we have an accurate dominator tree, first delete the dead cloned
   // blocks so that we can accurately build any cloned loops. It is important to

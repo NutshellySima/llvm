@@ -17,6 +17,7 @@
 #include "llvm/Analysis/LazyBlockFrequencyInfo.h"
 #include "llvm/Analysis/LoopInfo.h"
 #include "llvm/IR/DiagnosticInfo.h"
+#include "llvm/IR/DomTreeUpdater.h"
 #include "llvm/IR/Dominators.h"
 #include "llvm/IR/LLVMContext.h"
 
@@ -29,7 +30,8 @@ OptimizationRemarkEmitter::OptimizationRemarkEmitter(const Function *F)
 
   // First create a dominator tree.
   DominatorTree DT;
-  DT.recalculate(*const_cast<Function *>(F));
+  DomTreeUpdater(DT, DomTreeUpdater::UpdateStrategy::Eager)
+      .recalculate(*const_cast<Function *>(F));
 
   // Generate LoopInfo from it.
   LoopInfo LI;
