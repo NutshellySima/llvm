@@ -1,7 +1,7 @@
 ; This test checks to make sure that 'br X, Dest, Dest' is folded into 
 ; 'br Dest'
 
-; RUN: opt < %s -simplifycfg -S | FileCheck %s
+; RUN: opt < %s -simplifycfg -verify-dom-info -S | FileCheck %s
 
 declare void @noop()
 

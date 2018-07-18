@@ -27,7 +27,6 @@
 #include "llvm/Analysis/EHPersonalities.h"
 #include "llvm/Analysis/InstructionSimplify.h"
 #include "llvm/Analysis/TargetTransformInfo.h"
-#include "llvm/Transforms/Utils/Local.h"
 #include "llvm/Analysis/ValueTracking.h"
 #include "llvm/IR/Attributes.h"
 #include "llvm/IR/BasicBlock.h"
@@ -38,6 +37,8 @@
 #include "llvm/IR/Constants.h"
 #include "llvm/IR/DataLayout.h"
 #include "llvm/IR/DerivedTypes.h"
+#include "llvm/IR/DomTreeUpdater.h"
+#include "llvm/IR/Dominators.h"
 #include "llvm/IR/Function.h"
 #include "llvm/IR/GlobalValue.h"
 #include "llvm/IR/GlobalVariable.h"
@@ -66,6 +67,7 @@
 #include "llvm/Support/MathExtras.h"
 #include "llvm/Support/raw_ostream.h"
 #include "llvm/Transforms/Utils/BasicBlockUtils.h"
+#include "llvm/Transforms/Utils/Local.h"
 #include "llvm/Transforms/Utils/ValueMapper.h"
 #include <algorithm>
 #include <cassert>
@@ -173,6 +175,7 @@ class SimplifyCFGOpt {
   const DataLayout &DL;
   SmallPtrSetImpl<BasicBlock *> *LoopHeaders;
   const SimplifyCFGOptions &Options;
+  DomTreeUpdater *DTU;
 
   Value *isValueEqualityComparison(TerminatorInst *TI);
   BasicBlock *GetValueEqualityComparisonCases(
@@ -197,8 +200,8 @@ class SimplifyCFGOpt {
 public:
   SimplifyCFGOpt(const TargetTransformInfo &TTI, const DataLayout &DL,
                  SmallPtrSetImpl<BasicBlock *> *LoopHeaders,
-                 const SimplifyCFGOptions &Opts)
-      : TTI(TTI), DL(DL), LoopHeaders(LoopHeaders), Options(Opts) {}
+                 const SimplifyCFGOptions &Opts, DomTreeUpdater *DTU)
+      : TTI(TTI), DL(DL), LoopHeaders(LoopHeaders), Options(Opts), DTU(DTU) {}
 
   bool run(BasicBlock *BB);
 };
@@ -3536,7 +3539,8 @@ static bool SimplifyIndirectBrOnSelect(IndirectBrInst *IBI, SelectInst *SI) {
 /// the PHI, merging the third icmp into the switch.
 static bool tryToSimplifyUncondBranchWithICmpInIt(
     ICmpInst *ICI, IRBuilder<> &Builder, const DataLayout &DL,
-    const TargetTransformInfo &TTI, const SimplifyCFGOptions &Options) {
+    const TargetTransformInfo &TTI, const SimplifyCFGOptions &Options,
+    DomTreeUpdater *DTU) {
   BasicBlock *BB = ICI->getParent();
 
   // If the block has any PHIs in it or the icmp has multiple uses, it is too
@@ -3571,7 +3575,7 @@ static bool tryToSimplifyUncondBranchWithICmpInIt(
       ICI->eraseFromParent();
     }
     // BB is now empty, so it is likely to simplify away.
-    return simplifyCFG(BB, TTI, Options) | true;
+    return simplifyCFG(BB, TTI, Options, nullptr, DTU) | true;
   }
 
   // Ok, the block is reachable from the default dest.  If the constant we're
@@ -3587,7 +3591,7 @@ static bool tryToSimplifyUncondBranchWithICmpInIt(
     ICI->replaceAllUsesWith(V);
     ICI->eraseFromParent();
     // BB is now empty, so it is likely to simplify away.
-    return simplifyCFG(BB, TTI, Options) | true;
+    return simplifyCFG(BB, TTI, Options, nullptr, DTU) | true;
   }
 
   // The use of the icmp has to be in the 'end' block, by the only PHI node in
@@ -3822,7 +3826,7 @@ bool SimplifyCFGOpt::SimplifyCommonResume(ResumeInst *RI) {
     for (pred_iterator PI = pred_begin(TrivialBB), PE = pred_end(TrivialBB);
          PI != PE;) {
       BasicBlock *Pred = *PI++;
-      removeUnwindEdge(Pred);
+      removeUnwindEdge(Pred, DTU);
     }
 
     // In each SimplifyCFG run, only the current processed block can be erased.
@@ -3835,8 +3839,12 @@ bool SimplifyCFGOpt::SimplifyCommonResume(ResumeInst *RI) {
   }
 
   // Delete the resume block if all its predecessors have been removed.
-  if (pred_empty(BB))
-    BB->eraseFromParent();
+  if (pred_empty(BB)) {
+    if (DTU)
+      DTU->deleteBB(BB);
+    else
+      BB->eraseFromParent();
+  }
 
   return !TrivialUnwindBlocks.empty();
 }
@@ -3857,17 +3865,20 @@ bool SimplifyCFGOpt::SimplifySingleResume(ResumeInst *RI) {
   // Turn all invokes that unwind here into calls and delete the basic block.
   for (pred_iterator PI = pred_begin(BB), PE = pred_end(BB); PI != PE;) {
     BasicBlock *Pred = *PI++;
-    removeUnwindEdge(Pred);
+    removeUnwindEdge(Pred, DTU);
   }
 
   // The landingpad is now unreachable.  Zap it.
-  BB->eraseFromParent();
+  if (DTU)
+    DTU->deleteBB(BB);
+  else
+    BB->eraseFromParent();
   if (LoopHeaders)
     LoopHeaders->erase(BB);
   return true;
 }
 
-static bool removeEmptyCleanup(CleanupReturnInst *RI) {
+static bool removeEmptyCleanup(CleanupReturnInst *RI, DomTreeUpdater *DTU) {
   // If this is a trivial cleanup pad that executes no instructions, it can be
   // eliminated.  If the cleanup pad continues to the caller, any predecessor
   // that is an EH pad will be updated to continue to the caller and any
@@ -3991,7 +4002,7 @@ static bool removeEmptyCleanup(CleanupReturnInst *RI) {
     // The iterator must be updated here because we are removing this pred.
     BasicBlock *PredBB = *PI++;
     if (UnwindDest == nullptr) {
-      removeUnwindEdge(PredBB);
+      removeUnwindEdge(PredBB, DTU);
     } else {
       TerminatorInst *TI = PredBB->getTerminator();
       TI->replaceUsesOfWith(BB, UnwindDest);
@@ -3999,7 +4010,10 @@ static bool removeEmptyCleanup(CleanupReturnInst *RI) {
   }
 
   // The cleanup pad is now unreachable.  Zap it.
-  BB->eraseFromParent();
+  if (DTU)
+    DTU->deleteBB(BB);
+  else
+    BB->eraseFromParent();
   return true;
 }
 
@@ -4046,7 +4060,7 @@ bool SimplifyCFGOpt::SimplifyCleanupReturn(CleanupReturnInst *RI) {
   if (mergeCleanupPad(RI))
     return true;
 
-  if (removeEmptyCleanup(RI))
+  if (removeEmptyCleanup(RI, DTU))
     return true;
 
   return false;
@@ -4083,7 +4097,11 @@ bool SimplifyCFGOpt::SimplifyReturn(ReturnInst *RI, IRBuilder<> &Builder) {
     // If we eliminated all predecessors of the block, delete the block now.
     if (pred_empty(BB)) {
       // We know there are no successors, so just nuke the block.
-      BB->eraseFromParent();
+      if (DTU)
+        DTU->deleteBB(BB);
+      else
+        BB->eraseFromParent();
+      // FIXME: bug???
       if (LoopHeaders)
         LoopHeaders->erase(BB);
     }
@@ -4199,12 +4217,12 @@ bool SimplifyCFGOpt::SimplifyUnreachable(UnreachableInst *UI) {
       }
     } else if (auto *II = dyn_cast<InvokeInst>(TI)) {
       if (II->getUnwindDest() == BB) {
-        removeUnwindEdge(TI->getParent());
+        removeUnwindEdge(TI->getParent(), DTU);
         Changed = true;
       }
     } else if (auto *CSI = dyn_cast<CatchSwitchInst>(TI)) {
       if (CSI->getUnwindDest() == BB) {
-        removeUnwindEdge(TI->getParent());
+        removeUnwindEdge(TI->getParent(), DTU);
         Changed = true;
         continue;
       }
@@ -4228,7 +4246,7 @@ bool SimplifyCFGOpt::SimplifyUnreachable(UnreachableInst *UI) {
           // Rewrite all preds to unwind to caller (or from invoke to call).
           SmallVector<BasicBlock *, 8> EHPreds(predecessors(CatchSwitchBB));
           for (BasicBlock *EHPred : EHPreds)
-            removeUnwindEdge(EHPred);
+            removeUnwindEdge(EHPred, DTU);
         }
         // The catchswitch is no longer reachable.
         new UnreachableInst(CSI->getContext(), CSI);
@@ -4245,7 +4263,10 @@ bool SimplifyCFGOpt::SimplifyUnreachable(UnreachableInst *UI) {
   // If this block is now dead, remove it.
   if (pred_empty(BB) && BB != &BB->getParent()->getEntryBlock()) {
     // We know there are no successors, so just nuke the block.
-    BB->eraseFromParent();
+    if (DTU)
+      DTU->deleteBB(BB);
+    else
+      BB->eraseFromParent();
     if (LoopHeaders)
       LoopHeaders->erase(BB);
     return true;
@@ -5583,33 +5604,33 @@ bool SimplifyCFGOpt::SimplifySwitch(SwitchInst *SI, IRBuilder<> &Builder) {
     // see if that predecessor totally determines the outcome of this switch.
     if (BasicBlock *OnlyPred = BB->getSinglePredecessor())
       if (SimplifyEqualityComparisonWithOnlyPredecessor(SI, OnlyPred, Builder))
-        return simplifyCFG(BB, TTI, Options) | true;
+        return simplifyCFG(BB, TTI, Options, nullptr, DTU) | true;
 
     Value *Cond = SI->getCondition();
     if (SelectInst *Select = dyn_cast<SelectInst>(Cond))
       if (SimplifySwitchOnSelect(SI, Select))
-        return simplifyCFG(BB, TTI, Options) | true;
+        return simplifyCFG(BB, TTI, Options, nullptr, DTU) | true;
 
     // If the block only contains the switch, see if we can fold the block
     // away into any preds.
     if (SI == &*BB->instructionsWithoutDebug().begin())
       if (FoldValueComparisonIntoPredecessors(SI, Builder))
-        return simplifyCFG(BB, TTI, Options) | true;
+        return simplifyCFG(BB, TTI, Options, nullptr, DTU) | true;
   }
 
   // Try to transform the switch into an icmp and a branch.
   if (TurnSwitchRangeIntoICmp(SI, Builder))
-    return simplifyCFG(BB, TTI, Options) | true;
+    return simplifyCFG(BB, TTI, Options, nullptr, DTU) | true;
 
   // Remove unreachable cases.
   if (eliminateDeadSwitchCases(SI, Options.AC, DL))
-    return simplifyCFG(BB, TTI, Options) | true;
+    return simplifyCFG(BB, TTI, Options, nullptr, DTU) | true;
 
   if (switchToSelect(SI, Builder, DL, TTI))
-    return simplifyCFG(BB, TTI, Options) | true;
+    return simplifyCFG(BB, TTI, Options, nullptr, DTU) | true;
 
   if (Options.ForwardSwitchCondToPhi && ForwardSwitchConditionToPHI(SI))
-    return simplifyCFG(BB, TTI, Options) | true;
+    return simplifyCFG(BB, TTI, Options, nullptr, DTU) | true;
 
   // The conversion from switch to lookup tables results in difficult-to-analyze
   // code and makes pruning branches much harder. This is a problem if the
@@ -5618,10 +5639,10 @@ bool SimplifyCFGOpt::SimplifySwitch(SwitchInst *SI, IRBuilder<> &Builder) {
   // optimisation pipeline.
   if (Options.ConvertSwitchToLookupTable &&
       SwitchToLookupTable(SI, Builder, DL, TTI))
-    return simplifyCFG(BB, TTI, Options) | true;
+    return simplifyCFG(BB, TTI, Options, nullptr, DTU) | true;
 
   if (ReduceSwitchRange(SI, Builder, DL, TTI))
-    return simplifyCFG(BB, TTI, Options) | true;
+    return simplifyCFG(BB, TTI, Options, nullptr, DTU) | true;
 
   return false;
 }
@@ -5659,7 +5680,7 @@ bool SimplifyCFGOpt::SimplifyIndirectBr(IndirectBrInst *IBI) {
 
   if (SelectInst *SI = dyn_cast<SelectInst>(IBI->getAddress())) {
     if (SimplifyIndirectBrOnSelect(IBI, SI))
-      return simplifyCFG(BB, TTI, Options) | true;
+      return simplifyCFG(BB, TTI, Options, nullptr, DTU) | true;
   }
   return Changed;
 }
@@ -5759,7 +5780,7 @@ bool SimplifyCFGOpt::SimplifyUncondBranch(BranchInst *BI,
        (LoopHeaders->count(BB) || LoopHeaders->count(Succ)));
   BasicBlock::iterator I = BB->getFirstNonPHIOrDbg()->getIterator();
   if (I->isTerminator() && BB != &BB->getParent()->getEntryBlock() &&
-      !NeedCanonicalLoop && TryToSimplifyUncondBranchFromEmptyBlock(BB))
+      !NeedCanonicalLoop && TryToSimplifyUncondBranchFromEmptyBlock(BB, DTU))
     return true;
 
   // If the only instruction in the block is a seteq/setne comparison against a
@@ -5768,8 +5789,8 @@ bool SimplifyCFGOpt::SimplifyUncondBranch(BranchInst *BI,
     if (ICI->isEquality() && isa<ConstantInt>(ICI->getOperand(1))) {
       for (++I; isa<DbgInfoIntrinsic>(I); ++I)
         ;
-      if (I->isTerminator() &&
-          tryToSimplifyUncondBranchWithICmpInIt(ICI, Builder, DL, TTI, Options))
+      if (I->isTerminator() && tryToSimplifyUncondBranchWithICmpInIt(
+                                   ICI, Builder, DL, TTI, Options, DTU))
         return true;
     }
 
@@ -5787,7 +5808,7 @@ bool SimplifyCFGOpt::SimplifyUncondBranch(BranchInst *BI,
   // predecessor and use logical operations to update the incoming value
   // for PHI nodes in common successor.
   if (FoldBranchToCommonDest(BI, Options.BonusInstThreshold))
-    return simplifyCFG(BB, TTI, Options) | true;
+    return simplifyCFG(BB, TTI, Options, nullptr, DTU) | true;
   return false;
 }
 
@@ -5815,18 +5836,18 @@ bool SimplifyCFGOpt::SimplifyCondBranch(BranchInst *BI, IRBuilder<> &Builder) {
     // switch.
     if (BasicBlock *OnlyPred = BB->getSinglePredecessor())
       if (SimplifyEqualityComparisonWithOnlyPredecessor(BI, OnlyPred, Builder))
-        return simplifyCFG(BB, TTI, Options) | true;
+        return simplifyCFG(BB, TTI, Options, nullptr, DTU) | true;
 
     // This block must be empty, except for the setcond inst, if it exists.
     // Ignore dbg intrinsics.
     auto I = BB->instructionsWithoutDebug().begin();
     if (&*I == BI) {
       if (FoldValueComparisonIntoPredecessors(BI, Builder))
-        return simplifyCFG(BB, TTI, Options) | true;
+        return simplifyCFG(BB, TTI, Options, nullptr, DTU) | true;
     } else if (&*I == cast<Instruction>(BI->getCondition())) {
       ++I;
       if (&*I == BI && FoldValueComparisonIntoPredecessors(BI, Builder))
-        return simplifyCFG(BB, TTI, Options) | true;
+        return simplifyCFG(BB, TTI, Options, nullptr, DTU) | true;
     }
   }
 
@@ -5853,7 +5874,7 @@ bool SimplifyCFGOpt::SimplifyCondBranch(BranchInst *BI, IRBuilder<> &Builder) {
                               : ConstantInt::getFalse(BB->getContext());
         BI->setCondition(CI);
         RecursivelyDeleteTriviallyDeadInstructions(OldCond);
-        return simplifyCFG(BB, TTI, Options) | true;
+        return simplifyCFG(BB, TTI, Options, nullptr, DTU) | true;
       }
     }
   }
@@ -5862,7 +5883,7 @@ bool SimplifyCFGOpt::SimplifyCondBranch(BranchInst *BI, IRBuilder<> &Builder) {
   // branches to us and one of our successors, fold the comparison into the
   // predecessor and use logical operations to pick the right destination.
   if (FoldBranchToCommonDest(BI, Options.BonusInstThreshold))
-    return simplifyCFG(BB, TTI, Options) | true;
+    return simplifyCFG(BB, TTI, Options, nullptr, DTU) | true;
 
   // We have a conditional branch to two blocks that are only reachable
   // from BI.  We know that the condbr dominates the two blocks, so see if
@@ -5871,7 +5892,7 @@ bool SimplifyCFGOpt::SimplifyCondBranch(BranchInst *BI, IRBuilder<> &Builder) {
   if (BI->getSuccessor(0)->getSinglePredecessor()) {
     if (BI->getSuccessor(1)->getSinglePredecessor()) {
       if (HoistThenElseCodeToIf(BI, TTI))
-        return simplifyCFG(BB, TTI, Options) | true;
+        return simplifyCFG(BB, TTI, Options, nullptr, DTU) | true;
     } else {
       // If Successor #1 has multiple preds, we may be able to conditionally
       // execute Successor #0 if it branches to Successor #1.
@@ -5879,7 +5900,7 @@ bool SimplifyCFGOpt::SimplifyCondBranch(BranchInst *BI, IRBuilder<> &Builder) {
       if (Succ0TI->getNumSuccessors() == 1 &&
           Succ0TI->getSuccessor(0) == BI->getSuccessor(1))
         if (SpeculativelyExecuteBB(BI, BI->getSuccessor(0), TTI))
-          return simplifyCFG(BB, TTI, Options) | true;
+          return simplifyCFG(BB, TTI, Options, nullptr, DTU) | true;
     }
   } else if (BI->getSuccessor(1)->getSinglePredecessor()) {
     // If Successor #0 has multiple preds, we may be able to conditionally
@@ -5888,7 +5909,7 @@ bool SimplifyCFGOpt::SimplifyCondBranch(BranchInst *BI, IRBuilder<> &Builder) {
     if (Succ1TI->getNumSuccessors() == 1 &&
         Succ1TI->getSuccessor(0) == BI->getSuccessor(0))
       if (SpeculativelyExecuteBB(BI, BI->getSuccessor(1), TTI))
-        return simplifyCFG(BB, TTI, Options) | true;
+        return simplifyCFG(BB, TTI, Options, nullptr, DTU) | true;
   }
 
   // If this is a branch on a phi node in the current block, thread control
@@ -5896,14 +5917,14 @@ bool SimplifyCFGOpt::SimplifyCondBranch(BranchInst *BI, IRBuilder<> &Builder) {
   if (PHINode *PN = dyn_cast<PHINode>(BI->getCondition()))
     if (PN->getParent() == BI->getParent())
       if (FoldCondBranchOnPHI(BI, DL, Options.AC))
-        return simplifyCFG(BB, TTI, Options) | true;
+        return simplifyCFG(BB, TTI, Options, nullptr, DTU) | true;
 
   // Scan predecessor blocks for conditional branches.
   for (pred_iterator PI = pred_begin(BB), E = pred_end(BB); PI != E; ++PI)
     if (BranchInst *PBI = dyn_cast<BranchInst>((*PI)->getTerminator()))
       if (PBI != BI && PBI->isConditional())
         if (SimplifyCondBranchToCondBranch(PBI, BI, DL))
-          return simplifyCFG(BB, TTI, Options) | true;
+          return simplifyCFG(BB, TTI, Options, nullptr, DTU) | true;
 
   // Look for diamond patterns.
   if (MergeCondStores)
@@ -5911,7 +5932,7 @@ bool SimplifyCFGOpt::SimplifyCondBranch(BranchInst *BI, IRBuilder<> &Builder) {
       if (BranchInst *PBI = dyn_cast<BranchInst>(PrevBB->getTerminator()))
         if (PBI != BI && PBI->isConditional())
           if (mergeConditionalStores(PBI, BI, DL))
-            return simplifyCFG(BB, TTI, Options) | true;
+            return simplifyCFG(BB, TTI, Options, nullptr, DTU) | true;
 
   return false;
 }
@@ -6004,14 +6025,16 @@ bool SimplifyCFGOpt::run(BasicBlock *BB) {
   // or that just have themself as a predecessor.  These are unreachable.
   if ((pred_empty(BB) && BB != &BB->getParent()->getEntryBlock()) ||
       BB->getSinglePredecessor() == BB) {
+    if (DTU && DTU->isBBPendingDeletion(BB))
+      return false;
     LLVM_DEBUG(dbgs() << "Removing BB: \n" << *BB);
-    DeleteDeadBlock(BB);
+    DeleteDeadBlock(BB, DTU);
     return true;
   }
 
   // Check to see if we can constant propagate this terminator instruction
   // away...
-  Changed |= ConstantFoldTerminator(BB, true);
+  Changed |= ConstantFoldTerminator(BB, true, nullptr, DTU);
 
   // Check for and eliminate duplicate PHI nodes in this block.
   Changed |= EliminateDuplicatePHINodes(BB);
@@ -6022,7 +6045,7 @@ bool SimplifyCFGOpt::run(BasicBlock *BB) {
   // Merge basic blocks into their predecessor if there is only one distinct
   // pred, and if there is only one distinct successor of the predecessor, and
   // if there are no PHI nodes.
-  if (MergeBlockIntoPredecessor(BB))
+  if (MergeBlockIntoPredecessor(BB, DTU))
     return true;
 
   if (SinkCommon && Options.SinkCommonInsts)
@@ -6070,8 +6093,9 @@ bool SimplifyCFGOpt::run(BasicBlock *BB) {
 
 bool llvm::simplifyCFG(BasicBlock *BB, const TargetTransformInfo &TTI,
                        const SimplifyCFGOptions &Options,
-                       SmallPtrSetImpl<BasicBlock *> *LoopHeaders) {
+                       SmallPtrSetImpl<BasicBlock *> *LoopHeaders,
+                       DomTreeUpdater *DTU) {
   return SimplifyCFGOpt(TTI, BB->getModule()->getDataLayout(), LoopHeaders,
-                        Options)
+                        Options, DTU)
       .run(BB);
 }

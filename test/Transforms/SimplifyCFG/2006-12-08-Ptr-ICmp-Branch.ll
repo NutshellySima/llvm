@@ -1,4 +1,4 @@
-; RUN: opt < %s -simplifycfg | llvm-dis
+; RUN: opt < %s -simplifycfg -verify-dom-info | llvm-dis
 ; END.
 
 ; ModuleID = '2006-12-08-Ptr-ICmp-Branch.ll'

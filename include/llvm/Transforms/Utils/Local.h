@@ -215,7 +215,8 @@ bool EliminateDuplicatePHINodes(BasicBlock *BB);
 /// providing the set of loop headers that SimplifyCFG should not eliminate.
 bool simplifyCFG(BasicBlock *BB, const TargetTransformInfo &TTI,
                  const SimplifyCFGOptions &Options = {},
-                 SmallPtrSetImpl<BasicBlock *> *LoopHeaders = nullptr);
+                 SmallPtrSetImpl<BasicBlock *> *LoopHeaders = nullptr,
+                 DomTreeUpdater *DTU = nullptr);
 
 /// This function is used to flatten a CFG. For example, it uses parallel-and
 /// and parallel-or mode to collapse if-conditions and merge if-regions with
