@@ -286,7 +286,7 @@ bool JumpThreading::runOnFunction(Function &F) {
   auto DT = &getAnalysis<DominatorTreeWrapperPass>().getDomTree();
   auto LVI = &getAnalysis<LazyValueInfoWrapperPass>().getLVI();
   auto AA = &getAnalysis<AAResultsWrapperPass>().getAAResults();
-  DomTreeUpdater DTU(*DT, DomTreeUpdater::UpdateStrategy::Lazy);
+  DomTreeUpdater DTU(*DT, DomTreeUpdater::UpdateStrategy::Auto);
   std::unique_ptr<BlockFrequencyInfo> BFI;
   std::unique_ptr<BranchProbabilityInfo> BPI;
   bool HasProfileData = F.hasProfileData();
@@ -313,7 +313,7 @@ PreservedAnalyses JumpThreadingPass::run(Function &F,
   auto &DT = AM.getResult<DominatorTreeAnalysis>(F);
   auto &LVI = AM.getResult<LazyValueAnalysis>(F);
   auto &AA = AM.getResult<AAManager>(F);
-  DomTreeUpdater DTU(DT, DomTreeUpdater::UpdateStrategy::Lazy);
+  DomTreeUpdater DTU(DT, DomTreeUpdater::UpdateStrategy::Auto);
 
   std::unique_ptr<BlockFrequencyInfo> BFI;
   std::unique_ptr<BranchProbabilityInfo> BPI;
@@ -996,7 +996,6 @@ bool JumpThreadingPass::ProcessBlock(BasicBlock *BB) {
 
       LVI->eraseBlock(SinglePred);
       MergeBasicBlockIntoOnlyPred(BB, DTU);
-
       // Now that BB is merged into SinglePred (i.e. SinglePred Code followed by
       // BB code within one basic block `BB`), we need to invalidate the LVI
       // information associated with BB, because the LVI information need not be
@@ -1084,6 +1083,8 @@ bool JumpThreadingPass::ProcessBlock(BasicBlock *BB) {
     for (unsigned i = 0, e = BBTerm->getNumSuccessors(); i != e; ++i) {
       if (i == BestSucc) continue;
       BasicBlock *Succ = BBTerm->getSuccessor(i);
+      // Notify DTU about the change of BB.
+      DTU->isAboutToChange(BB);
       Succ->removePredecessor(BB, true);
       Updates.push_back({DominatorTree::Delete, BB, Succ});
     }
@@ -1117,7 +1118,6 @@ bool JumpThreadingPass::ProcessBlock(BasicBlock *BB) {
       return true;
     return false;
   }
-
   if (CmpInst *CondCmp = dyn_cast<CmpInst>(CondInst)) {
     // If we're branching on a conditional, LVI might be able to determine
     // it's value at the branch instruction.  We only handle comparisons
@@ -1141,6 +1141,8 @@ bool JumpThreadingPass::ProcessBlock(BasicBlock *BB) {
       if (Ret != LazyValueInfo::Unknown) {
         unsigned ToRemove = Ret == LazyValueInfo::True ? 1 : 0;
         unsigned ToKeep = Ret == LazyValueInfo::True ? 0 : 1;
+        // Notify DTU.
+        DTU->isAboutToChange(BB);
         BasicBlock *ToRemoveSucc = CondBr->getSuccessor(ToRemove);
         ToRemoveSucc->removePredecessor(BB, true);
         BranchInst::Create(CondBr->getSuccessor(ToKeep), CondBr);
@@ -1220,7 +1222,6 @@ bool JumpThreadingPass::ProcessImpliedCondition(BasicBlock *BB) {
   auto *BI = dyn_cast<BranchInst>(BB->getTerminator());
   if (!BI || !BI->isConditional())
     return false;
-
   Value *Cond = BI->getCondition();
   BasicBlock *CurrentBB = BB;
   BasicBlock *CurrentPred = BB->getSinglePredecessor();
@@ -1241,6 +1242,7 @@ bool JumpThreadingPass::ProcessImpliedCondition(BasicBlock *BB) {
     if (Implication) {
       BasicBlock *KeepSucc = BI->getSuccessor(*Implication ? 0 : 1);
       BasicBlock *RemoveSucc = BI->getSuccessor(*Implication ? 1 : 0);
+      DTU->isAboutToChange(BB);
       RemoveSucc->removePredecessor(BB);
       BranchInst::Create(KeepSucc, BI);
       BI->eraseFromParent();
@@ -1250,7 +1252,6 @@ bool JumpThreadingPass::ProcessImpliedCondition(BasicBlock *BB) {
     CurrentBB = CurrentPred;
     CurrentPred = CurrentBB->getSinglePredecessor();
   }
-
   return false;
 }
 
@@ -1597,7 +1598,6 @@ bool JumpThreadingPass::ProcessThreadableEdges(Value *Cond, BasicBlock *BB,
   BasicBlock *MultipleDestSentinel = (BasicBlock*)(intptr_t)~0ULL;
   Constant *OnlyVal = nullptr;
   Constant *MultipleVal = (Constant *)(intptr_t)~0ULL;
-
   unsigned PredWithKnownDest = 0;
   for (const auto &PredValue : PredValues) {
     BasicBlock *Pred = PredValue.second;
@@ -1658,6 +1658,8 @@ bool JumpThreadingPass::ProcessThreadableEdges(Value *Cond, BasicBlock *BB,
       bool SeenFirstBranchToOnlyDest = false;
       std::vector <DominatorTree::UpdateType> Updates;
       Updates.reserve(BB->getTerminator()->getNumSuccessors() - 1);
+      if (BB->getTerminator()->getNumSuccessors() > 1)
+        DTU->isAboutToChange(BB);
       for (BasicBlock *SuccBB : successors(BB)) {
         if (SuccBB == OnlyDest && !SeenFirstBranchToOnlyDest) {
           SeenFirstBranchToOnlyDest = true; // Don't modify the first branch.
@@ -1672,7 +1674,6 @@ bool JumpThreadingPass::ProcessThreadableEdges(Value *Cond, BasicBlock *BB,
       BranchInst::Create(OnlyDest, Term);
       Term->eraseFromParent();
       DTU->applyUpdates(Updates);
-
       // If the condition is now dead due to the removal of the old terminator,
       // erase it.
       if (auto *CondInst = dyn_cast<Instruction>(Cond)) {
@@ -1942,7 +1943,6 @@ bool JumpThreadingPass::ThreadEdge(BasicBlock *BB,
                       << " common predecessors.\n");
     PredBB = SplitBlockPreds(BB, PredBBs, ".thr_comm");
   }
-
   // And finally, do it!
   LLVM_DEBUG(dbgs() << "  Threading edge from '" << PredBB->getName()
                     << "' to '" << SuccBB->getName()
@@ -1963,6 +1963,7 @@ bool JumpThreadingPass::ThreadEdge(BasicBlock *BB,
   BasicBlock *NewBB = BasicBlock::Create(BB->getContext(),
                                          BB->getName()+".thread",
                                          BB->getParent(), BB);
+
   NewBB->moveAfter(PredBB);
 
   // Set the block frequency of NewBB.
@@ -2008,6 +2009,7 @@ bool JumpThreadingPass::ThreadEdge(BasicBlock *BB,
   TerminatorInst *PredTerm = PredBB->getTerminator();
   for (unsigned i = 0, e = PredTerm->getNumSuccessors(); i != e; ++i)
     if (PredTerm->getSuccessor(i) == BB) {
+      DTU->isAboutToChange(PredBB);
       BB->removePredecessor(PredBB, true);
       PredTerm->setSuccessor(i, NewBB);
     }
@@ -2075,6 +2077,9 @@ bool JumpThreadingPass::ThreadEdge(BasicBlock *BB,
 BasicBlock *JumpThreadingPass::SplitBlockPreds(BasicBlock *BB,
                                                ArrayRef<BasicBlock *> Preds,
                                                const char *Suffix) {
+  for (auto *Pred : Preds)
+    DTU->isAboutToChange(Pred);
+
   SmallVector<BasicBlock *, 2> NewBBs;
 
   // Collect the frequencies of all predecessors of BB, which will be used to
@@ -2088,6 +2093,8 @@ BasicBlock *JumpThreadingPass::SplitBlockPreds(BasicBlock *BB,
   // In the case when BB is a LandingPad block we create 2 new predecessors
   // instead of just one.
   if (BB->isLandingPad()) {
+    for (auto *Pred : predecessors(BB))
+      DTU->isAboutToChange(Pred);
     std::string NewName = std::string(Suffix) + ".split-lp";
     SplitLandingPadPredecessors(BB, Preds, Suffix, NewName.c_str(), NewBBs);
   } else {
@@ -2244,7 +2251,6 @@ bool JumpThreadingPass::DuplicateCondBranchOnPHIIntoPred(
                       << "' - it might create an irreducible loop!\n");
     return false;
   }
-
   unsigned DuplicationCost =
       getJumpThreadDuplicationCost(BB, BB->getTerminator(), BBDupThreshold);
   if (DuplicationCost > BBDupThreshold) {
@@ -2263,6 +2269,7 @@ bool JumpThreadingPass::DuplicateCondBranchOnPHIIntoPred(
                       << " common predecessors.\n");
     PredBB = SplitBlockPreds(BB, PredBBs, ".thr_comm");
   }
+
   Updates.push_back({DominatorTree::Delete, PredBB, BB});
 
   // Okay, we decided to do this!  Clone all the instructions in BB onto the end
@@ -2277,6 +2284,7 @@ bool JumpThreadingPass::DuplicateCondBranchOnPHIIntoPred(
   BranchInst *OldPredBranch = dyn_cast<BranchInst>(PredBB->getTerminator());
 
   if (!OldPredBranch || !OldPredBranch->isUnconditional()) {
+    DTU->isAboutToChange(PredBB);
     BasicBlock *OldPredBB = PredBB;
     PredBB = SplitEdge(OldPredBB, BB);
     Updates.push_back({DominatorTree::Insert, OldPredBB, PredBB});
@@ -2284,6 +2292,7 @@ bool JumpThreadingPass::DuplicateCondBranchOnPHIIntoPred(
     Updates.push_back({DominatorTree::Delete, OldPredBB, BB});
     OldPredBranch = cast<BranchInst>(PredBB->getTerminator());
   }
+  DTU->isAboutToChange(PredBB);
 
   // We are going to have to map operands from the original BB block into the
   // PredBB block.  Evaluate PHI nodes in BB.
@@ -2383,7 +2392,6 @@ bool JumpThreadingPass::DuplicateCondBranchOnPHIIntoPred(
   // Remove the unconditional branch at the end of the PredBB block.
   OldPredBranch->eraseFromParent();
   DTU->applyUpdates(Updates);
-
   ++NumDupes;
   return true;
 }
@@ -2421,7 +2429,6 @@ bool JumpThreadingPass::TryToUnfoldSelect(CmpInst *CondCmp, BasicBlock *BB) {
     BranchInst *PredTerm = dyn_cast<BranchInst>(Pred->getTerminator());
     if (!PredTerm || !PredTerm->isUnconditional())
       continue;
-
     // Now check if one of the select values would allow us to constant fold the
     // terminator in BB. We don't do the transform if both sides fold, those
     // cases will be threaded in any case.
@@ -2449,6 +2456,7 @@ bool JumpThreadingPass::TryToUnfoldSelect(CmpInst *CondCmp, BasicBlock *BB) {
       // BB
       BasicBlock *NewBB = BasicBlock::Create(BB->getContext(), "select.unfold",
                                              BB->getParent(), BB);
+      DTU->isAboutToChange(Pred);
       // Move the unconditional branch to NewBB.
       PredTerm->removeFromParent();
       NewBB->getInstList().insert(NewBB->end(), PredTerm);
@@ -2536,6 +2544,7 @@ bool JumpThreadingPass::TryToUnfoldSelectInCurrBB(BasicBlock *BB) {
 
     if (!SI)
       continue;
+    DTU->isAboutToChange(BB);
     // Expand the select.
     TerminatorInst *Term =
         SplitBlockAndInsertIfThen(SI->getCondition(), SI, false);
@@ -2643,7 +2652,6 @@ bool JumpThreadingPass::ThreadGuard(BasicBlock *BB, IntrinsicInst *Guard,
 
   if (!TrueDestIsSafe && !FalseDestIsSafe)
     return false;
-
   BasicBlock *PredUnguardedBlock = TrueDestIsSafe ? TrueDest : FalseDest;
   BasicBlock *PredGuardedBlock = FalseDestIsSafe ? TrueDest : FalseDest;
 
@@ -2652,6 +2660,8 @@ bool JumpThreadingPass::ThreadGuard(BasicBlock *BB, IntrinsicInst *Guard,
   unsigned Cost = getJumpThreadDuplicationCost(BB, AfterGuard, BBDupThreshold);
   if (Cost > BBDupThreshold)
     return false;
+  DTU->isAboutToChange(PredGuardedBlock);
+  DTU->isAboutToChange(PredUnguardedBlock);
   // Duplicate all instructions before the guard and the guard itself to the
   // branch where implication is not proved.
   BasicBlock *GuardedBlock = DuplicateInstructionsInSplitBetween(
