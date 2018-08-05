@@ -28,11 +28,12 @@
 #include "llvm/Analysis/CFG.h"
 #include "llvm/Analysis/GlobalsModRef.h"
 #include "llvm/Analysis/TargetTransformInfo.h"
-#include "llvm/Transforms/Utils/Local.h"
 #include "llvm/IR/Attributes.h"
 #include "llvm/IR/CFG.h"
 #include "llvm/IR/Constants.h"
 #include "llvm/IR/DataLayout.h"
+#include "llvm/IR/DomTreeUpdater.h"
+#include "llvm/IR/Dominators.h"
 #include "llvm/IR/Instructions.h"
 #include "llvm/IR/IntrinsicInst.h"
 #include "llvm/IR/Module.h"
@@ -40,6 +41,7 @@
 #include "llvm/Support/CommandLine.h"
 #include "llvm/Transforms/Scalar.h"
 #include "llvm/Transforms/Scalar/SimplifyCFG.h"
+#include "llvm/Transforms/Utils/Local.h"
 #include <utility>
 using namespace llvm;
 
@@ -70,7 +72,7 @@ STATISTIC(NumSimpl, "Number of blocks simplified");
 
 /// If we have more than one empty (other than phi node) return blocks,
 /// merge them together to promote recursive block merging.
-static bool mergeEmptyReturnBlocks(Function &F) {
+static bool mergeEmptyReturnBlocks(Function &F, DomTreeUpdater *DTU) {
   bool Changed = false;
 
   BasicBlock *RetBlock = nullptr;
@@ -114,7 +116,10 @@ static bool mergeEmptyReturnBlocks(Function &F) {
         Ret->getOperand(0) ==
           cast<ReturnInst>(RetBlock->getTerminator())->getOperand(0)) {
       BB.replaceAllUsesWith(RetBlock);
-      BB.eraseFromParent();
+      if (DTU)
+        DTU->deleteBB(&BB);
+      else
+        BB.eraseFromParent();
       continue;
     }
 
@@ -146,7 +151,8 @@ static bool mergeEmptyReturnBlocks(Function &F) {
 /// Call SimplifyCFG on all the blocks in the function,
 /// iterating until no more changes are made.
 static bool iterativelySimplifyCFG(Function &F, const TargetTransformInfo &TTI,
-                                   const SimplifyCFGOptions &Options) {
+                                   const SimplifyCFGOptions &Options,
+                                   DomTreeUpdater *DTU) {
   bool Changed = false;
   bool LocalChange = true;
 
@@ -161,7 +167,7 @@ static bool iterativelySimplifyCFG(Function &F, const TargetTransformInfo &TTI,
 
     // Loop over all of the basic blocks and remove them if they are unneeded.
     for (Function::iterator BBIt = F.begin(); BBIt != F.end(); ) {
-      if (simplifyCFG(&*BBIt++, TTI, Options, &LoopHeaders)) {
+      if (simplifyCFG(&*BBIt++, TTI, Options, &LoopHeaders, DTU)) {
         LocalChange = true;
         ++NumSimpl;
       }
@@ -172,10 +178,12 @@ static bool iterativelySimplifyCFG(Function &F, const TargetTransformInfo &TTI,
 }
 
 static bool simplifyFunctionCFG(Function &F, const TargetTransformInfo &TTI,
-                                const SimplifyCFGOptions &Options) {
-  bool EverChanged = removeUnreachableBlocks(F);
-  EverChanged |= mergeEmptyReturnBlocks(F);
-  EverChanged |= iterativelySimplifyCFG(F, TTI, Options);
+                                const SimplifyCFGOptions &Options,
+                                DominatorTree *DT) {
+  DomTreeUpdater DTU(DT, DomTreeUpdater::UpdateStrategy::Auto);
+  bool EverChanged = removeUnreachableBlocks(F, nullptr, &DTU);
+  EverChanged |= mergeEmptyReturnBlocks(F, &DTU);
+  EverChanged |= iterativelySimplifyCFG(F, TTI, Options, &DTU);
 
   // If neither pass changed anything, we're done.
   if (!EverChanged) return false;
@@ -185,12 +193,12 @@ static bool simplifyFunctionCFG(Function &F, const TargetTransformInfo &TTI,
   // iterate between the two optimizations.  We structure the code like this to
   // avoid rerunning iterativelySimplifyCFG if the second pass of
   // removeUnreachableBlocks doesn't do anything.
-  if (!removeUnreachableBlocks(F))
+  if (!removeUnreachableBlocks(F, nullptr, &DTU))
     return true;
 
   do {
-    EverChanged = iterativelySimplifyCFG(F, TTI, Options);
-    EverChanged |= removeUnreachableBlocks(F);
+    EverChanged = iterativelySimplifyCFG(F, TTI, Options, &DTU);
+    EverChanged |= removeUnreachableBlocks(F, nullptr, &DTU);
   } while (EverChanged);
 
   return true;
@@ -218,11 +226,13 @@ SimplifyCFGPass::SimplifyCFGPass(const SimplifyCFGOptions &Opts) {
 PreservedAnalyses SimplifyCFGPass::run(Function &F,
                                        FunctionAnalysisManager &AM) {
   auto &TTI = AM.getResult<TargetIRAnalysis>(F);
+  auto *DT = AM.getCachedResult<DominatorTreeAnalysis>(F);
   Options.AC = &AM.getResult<AssumptionAnalysis>(F);
-  if (!simplifyFunctionCFG(F, TTI, Options))
+  if (!simplifyFunctionCFG(F, TTI, Options, DT))
     return PreservedAnalyses::all();
   PreservedAnalyses PA;
   PA.preserve<GlobalsAA>();
+  PA.preserve<DominatorTreeAnalysis>();
   return PA;
 }
 
@@ -267,12 +277,15 @@ struct CFGSimplifyPass : public FunctionPass {
 
     Options.AC = &getAnalysis<AssumptionCacheTracker>().getAssumptionCache(F);
     auto &TTI = getAnalysis<TargetTransformInfoWrapperPass>().getTTI(F);
-    return simplifyFunctionCFG(F, TTI, Options);
+    auto *DTWP = getAnalysisIfAvailable<DominatorTreeWrapperPass>();
+    DominatorTree *DT = DTWP ? &DTWP->getDomTree() : nullptr;
+    return simplifyFunctionCFG(F, TTI, Options, DT);
   }
   void getAnalysisUsage(AnalysisUsage &AU) const override {
     AU.addRequired<AssumptionCacheTracker>();
     AU.addRequired<TargetTransformInfoWrapperPass>();
     AU.addPreserved<GlobalsAAWrapperPass>();
+    AU.addPreserved<DominatorTreeWrapperPass>();
   }
 };
 }

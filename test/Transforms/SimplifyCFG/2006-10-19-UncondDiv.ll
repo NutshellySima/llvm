@@ -1,5 +1,5 @@
 ; PR957
-; RUN: opt < %s -simplifycfg -S | FileCheck %s
+; RUN: opt < %s -simplifycfg -verify-dom-info -S | FileCheck %s
 
 ; CHECK-NOT: select
 

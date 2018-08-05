@@ -1,4 +1,4 @@
-; RUN: opt < %s -simplifycfg -disable-output
+; RUN: opt < %s -simplifycfg -verify-dom-info -disable-output
 ; END.
 
 define void @main() {

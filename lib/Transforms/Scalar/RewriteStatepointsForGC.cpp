@@ -2535,7 +2535,7 @@ bool RewriteStatepointsForGC::runOnFunction(Function &F, DominatorTree &DT,
   // Delete any unreachable statepoints so that we don't have unrewritten
   // statepoints surviving this pass.  This makes testing easier and the
   // resulting IR less confusing to human readers.
-  DomTreeUpdater DTU(DT, DomTreeUpdater::UpdateStrategy::Lazy);
+  DomTreeUpdater DTU(DT, DomTreeUpdater::UpdateStrategy::Auto);
   bool MadeChange = removeUnreachableBlocks(F, nullptr, &DTU);
   // Flush the Dominator Tree.
   DTU.getDomTree();

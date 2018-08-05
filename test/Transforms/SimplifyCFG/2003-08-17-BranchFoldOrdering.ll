@@ -3,7 +3,7 @@
 ; due to the fact that the SimplifyCFG function does not use 
 ; the ConstantFoldTerminator function.
 
-; RUN: opt < %s -simplifycfg -S | FileCheck %s
+; RUN: opt < %s -simplifycfg -verify-dom-info -S | FileCheck %s
 
 ; CHECK-NOT: br i1 %c2
 
