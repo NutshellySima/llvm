@@ -52,6 +52,9 @@ void llvm::DeleteDeadBlock(BasicBlock *BB, DomTreeUpdater *DTU) {
          // Can delete self loop.
          BB->getSinglePredecessor() == BB) && "Block is not dead!");
   TerminatorInst *BBTerm = BB->getTerminator();
+  if (DTU)
+    if (BBTerm->getNumSuccessors() > 0)
+      DTU->isAboutToChange(BB);
   std::vector<DominatorTree::UpdateType> Updates;
 
   // Loop through all of our successors and make sure they know that one

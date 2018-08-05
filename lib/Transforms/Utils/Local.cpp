@@ -114,6 +114,8 @@ bool llvm::ConstantFoldTerminator(BasicBlock *BB, bool DeleteDeadConditions,
     BasicBlock *Dest2 = BI->getSuccessor(1);
 
     if (auto *Cond = dyn_cast<ConstantInt>(BI->getCondition())) {
+      if (DTU)
+        DTU->isAboutToChange(BB);
       // Are we branching on constant?
       // YES.  Change to unconditional branch...
       BasicBlock *Destination = Cond->getZExtValue() ? Dest1 : Dest2;
@@ -199,6 +201,8 @@ bool llvm::ConstantFoldTerminator(BasicBlock *BB, bool DeleteDeadConditions,
         }
         // Remove this entry.
         BasicBlock *ParentBB = SI->getParent();
+        if (DTU)
+          DTU->isAboutToChange(ParentBB);
         DefaultDest->removePredecessor(ParentBB);
         i = SI->removeCase(i);
         e = SI->case_end();
@@ -239,6 +243,8 @@ bool llvm::ConstantFoldTerminator(BasicBlock *BB, bool DeleteDeadConditions,
         if (Succ == TheOnlyDest) {
           TheOnlyDest = nullptr; // Don't modify the first branch to TheOnlyDest
         } else {
+          if (DTU)
+            DTU->isAboutToChange(BB);
           Succ->removePredecessor(BB);
           if (DTU)
             Updates.push_back({DominatorTree::Delete, BB, Succ});
@@ -310,6 +316,8 @@ bool llvm::ConstantFoldTerminator(BasicBlock *BB, bool DeleteDeadConditions,
         } else {
           BasicBlock *ParentBB = IBI->getParent();
           BasicBlock *DestBB = IBI->getDestination(i);
+          if (DTU)
+            DTU->isAboutToChange(ParentBB);
           DestBB->removePredecessor(ParentBB);
           if (DTU)
             Updates.push_back({DominatorTree::Delete, ParentBB, DestBB});
@@ -683,8 +691,10 @@ void llvm::MergeBasicBlockIntoOnlyPred(BasicBlock *DestBB,
 
   if (DTU) {
     Updates.reserve(1 + (2 * pred_size(PredBB)));
+    DTU->isAboutToChange(PredBB);
     Updates.push_back({DominatorTree::Delete, PredBB, DestBB});
     for (auto I = pred_begin(PredBB), E = pred_end(PredBB); I != E; ++I) {
+      DTU->isAboutToChange(*I);
       Updates.push_back({DominatorTree::Delete, *I, PredBB});
       // This predecessor of PredBB may already have DestBB as a successor.
       if (llvm::find(successors(*I), DestBB) == succ_end(*I))
@@ -989,9 +999,11 @@ bool llvm::TryToSimplifyUncondBranchFromEmptyBlock(BasicBlock *BB,
   std::vector<DominatorTree::UpdateType> Updates;
   if (DTU) {
     Updates.reserve(1 + (2 * pred_size(BB)));
+    DTU->isAboutToChange(BB);
     Updates.push_back({DominatorTree::Delete, BB, Succ});
     // All predecessors of BB will be moved to Succ.
     for (auto I = pred_begin(BB), E = pred_end(BB); I != E; ++I) {
+      DTU->isAboutToChange(*I);
       Updates.push_back({DominatorTree::Delete, *I, BB});
       // This predecessor of BB may already have Succ as a successor.
       if (llvm::find(successors(*I), Succ) == succ_end(*I))
@@ -1918,6 +1930,8 @@ unsigned llvm::changeToUnreachable(Instruction *I, bool UseLLVMTrap,
   if (DTU)
     Updates.reserve(BB->getTerminator()->getNumSuccessors());
   for (BasicBlock *Successor : successors(BB)) {
+    if (DTU)
+      DTU->isAboutToChange(BB);
     Successor->removePredecessor(BB, PreserveLCSSA);
     if (DTU)
       Updates.push_back({DominatorTree::Delete, BB, Successor});
@@ -1966,6 +1980,8 @@ static void changeToCall(InvokeInst *II, DomTreeUpdater *DTU = nullptr) {
   // Update PHI nodes in the unwind destination
   BasicBlock *BB = II->getParent();
   BasicBlock *UnwindDestBB = II->getUnwindDest();
+  if (DTU)
+    DTU->isAboutToChange(BB);
   UnwindDestBB->removePredecessor(BB);
   II->eraseFromParent();
   if (DTU)
@@ -2112,6 +2128,8 @@ static bool markAliveBlocks(Function &F,
           BasicBlock *NormalDestBB = II->getNormalDest();
           BasicBlock *UnwindDestBB = II->getUnwindDest();
           BranchInst::Create(NormalDestBB, II);
+          if (DTU)
+            DTU->isAboutToChange(BB);
           UnwindDestBB->removePredecessor(II->getParent());
           II->eraseFromParent();
           if (DTU)
@@ -2231,6 +2249,8 @@ bool llvm::removeUnreachableBlocks(Function &F, LazyValueInfo *LVI,
     if (Reachable.count(BB))
       continue;
     for (BasicBlock *Successor : successors(BB)) {
+      if (DTU)
+        DTU->isAboutToChange(BB);
       if (Reachable.count(Successor))
         Successor->removePredecessor(BB);
       if (DTU)

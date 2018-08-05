@@ -2709,6 +2709,8 @@ APInt llvm::APIntOps::RoundingSDiv(const APInt &A, const APInt &B,
   llvm_unreachable("Unknown APInt::Rounding enum");
 }
 
+#define LLVM_DEBUG(X) DEBUG_WITH_TYPE(DEBUG_TYPE, X)
+
 Optional<APInt>
 llvm::APIntOps::SolveQuadraticEquationWrap(APInt A, APInt B, APInt C,
                                            unsigned RangeWidth) {
