@@ -186,10 +186,10 @@ TEST(Local, MergeBasicBlockIntoOnlyPred) {
       entry:
         br label %bb2.i
       bb2.i:                                            ; preds = %bb4.i, %entry
-        br i1 false, label %bb4.i, label %base2flt.exit204
+        br i1 false, label %bb4.i, label %bb10.i196.bb7.i197_crit_edge
       bb4.i:                                            ; preds = %bb2.i
-        br i1 false, label %base2flt.exit204, label %bb2.i
-      bb10.i196.bb7.i197_crit_edge:                     ; No predecessors!
+        br i1 false, label %base2flt.exit204, label %bb10.i196.bb7.i197_crit_edge
+      bb10.i196.bb7.i197_crit_edge:
         br label %bb7.i197
       bb7.i197:                                         ; preds = %bb10.i196.bb7.i197_crit_edge
         %.reg2mem.0 = phi i32 [ %.reg2mem.0, %bb10.i196.bb7.i197_crit_edge ]
@@ -232,105 +232,105 @@ TEST(Local, MergeBasicBlockIntoOnlyPred) {
 
   // Test MergeBasicBlockIntoOnlyPred working under Eager UpdateStrategy with
   // both DT and PDT.
-  resetIR();
+  /*resetIR();
+
   runWithDomTree(*M, "f", [&](Function &F, DominatorTree *DT) {
     PostDominatorTree PDT = PostDominatorTree(F);
     DomTreeUpdater DTU(*DT, PDT, DomTreeUpdater::UpdateStrategy::Eager);
     Test(F, DTU);
-  });
+  });*/
 
   // Test MergeBasicBlockIntoOnlyPred working under Eager UpdateStrategy with
   // DT.
   resetIR();
+  M->getFunction("f")->viewCFG();
   runWithDomTree(*M, "f", [&](Function &F, DominatorTree *DT) {
     DomTreeUpdater DTU(*DT, DomTreeUpdater::UpdateStrategy::Eager);
     Test(F, DTU);
   });
+  /*
+    // Test MergeBasicBlockIntoOnlyPred working under Eager UpdateStrategy with
+    // PDT.
+    resetIR();
+    runWithDomTree(*M, "f", [&](Function &F, DominatorTree *DT) {
+      PostDominatorTree PDT = PostDominatorTree(F);
+      DomTreeUpdater DTU(PDT, DomTreeUpdater::UpdateStrategy::Eager);
+      Test(F, DTU);
+    });
 
-  // Test MergeBasicBlockIntoOnlyPred working under Eager UpdateStrategy with
-  // PDT.
-  resetIR();
-  runWithDomTree(*M, "f", [&](Function &F, DominatorTree *DT) {
-    PostDominatorTree PDT = PostDominatorTree(F);
-    DomTreeUpdater DTU(PDT, DomTreeUpdater::UpdateStrategy::Eager);
-    Test(F, DTU);
-  });
+    // Test MergeBasicBlockIntoOnlyPred working under Lazy UpdateStrategy with
+    // both DT and PDT.
+    resetIR();
+    runWithDomTree(*M, "f", [&](Function &F, DominatorTree *DT) {
+      PostDominatorTree PDT = PostDominatorTree(F);
+      DomTreeUpdater DTU(*DT, PDT, DomTreeUpdater::UpdateStrategy::Lazy);
+      Test(F, DTU);
+    });
 
-  // Test MergeBasicBlockIntoOnlyPred working under Lazy UpdateStrategy with
-  // both DT and PDT.
-  resetIR();
-  runWithDomTree(*M, "f", [&](Function &F, DominatorTree *DT) {
-    PostDominatorTree PDT = PostDominatorTree(F);
-    DomTreeUpdater DTU(*DT, PDT, DomTreeUpdater::UpdateStrategy::Lazy);
-    Test(F, DTU);
-  });
+    // Test MergeBasicBlockIntoOnlyPred working under Lazy UpdateStrategy with
+    // PDT.
+    resetIR();
+    runWithDomTree(*M, "f", [&](Function &F, DominatorTree *DT) {
+      PostDominatorTree PDT = PostDominatorTree(F);
+      DomTreeUpdater DTU(PDT, DomTreeUpdater::UpdateStrategy::Lazy);
+      Test(F, DTU);
+    });
 
-  // Test MergeBasicBlockIntoOnlyPred working under Lazy UpdateStrategy with
-  // PDT.
-  resetIR();
-  runWithDomTree(*M, "f", [&](Function &F, DominatorTree *DT) {
-    PostDominatorTree PDT = PostDominatorTree(F);
-    DomTreeUpdater DTU(PDT, DomTreeUpdater::UpdateStrategy::Lazy);
-    Test(F, DTU);
-  });
+    // Test MergeBasicBlockIntoOnlyPred working under Lazy UpdateStrategy with
+    DT. resetIR(); runWithDomTree(*M, "f", [&](Function &F, DominatorTree *DT) {
+      DomTreeUpdater DTU(*DT, DomTreeUpdater::UpdateStrategy::Lazy);
+      Test(F, DTU);
+    });
 
-  // Test MergeBasicBlockIntoOnlyPred working under Lazy UpdateStrategy with DT.
-  resetIR();
-  runWithDomTree(*M, "f", [&](Function &F, DominatorTree *DT) {
-    DomTreeUpdater DTU(*DT, DomTreeUpdater::UpdateStrategy::Lazy);
-    Test(F, DTU);
-  });
+    // Test MergeBasicBlockIntoOnlyPred working under Eager UpdateStrategy with
+    // both DT and PDT.
+    resetIRReplaceEntry();
+    runWithDomTree(*M, "f", [&](Function &F, DominatorTree *DT) {
+      PostDominatorTree PDT = PostDominatorTree(F);
+      DomTreeUpdater DTU(*DT, PDT, DomTreeUpdater::UpdateStrategy::Eager);
+      Test(F, DTU);
+    });
 
-  // Test MergeBasicBlockIntoOnlyPred working under Eager UpdateStrategy with
-  // both DT and PDT.
-  resetIRReplaceEntry();
-  runWithDomTree(*M, "f", [&](Function &F, DominatorTree *DT) {
-    PostDominatorTree PDT = PostDominatorTree(F);
-    DomTreeUpdater DTU(*DT, PDT, DomTreeUpdater::UpdateStrategy::Eager);
-    Test(F, DTU);
-  });
+    // Test MergeBasicBlockIntoOnlyPred working under Eager UpdateStrategy with
+    // DT.
+    resetIRReplaceEntry();
+    runWithDomTree(*M, "f", [&](Function &F, DominatorTree *DT) {
+      DomTreeUpdater DTU(*DT, DomTreeUpdater::UpdateStrategy::Eager);
+      Test(F, DTU);
+    });
 
-  // Test MergeBasicBlockIntoOnlyPred working under Eager UpdateStrategy with
-  // DT.
-  resetIRReplaceEntry();
-  runWithDomTree(*M, "f", [&](Function &F, DominatorTree *DT) {
-    DomTreeUpdater DTU(*DT, DomTreeUpdater::UpdateStrategy::Eager);
-    Test(F, DTU);
-  });
+    // Test MergeBasicBlockIntoOnlyPred working under Eager UpdateStrategy with
+    // PDT.
+    resetIRReplaceEntry();
+    runWithDomTree(*M, "f", [&](Function &F, DominatorTree *DT) {
+      PostDominatorTree PDT = PostDominatorTree(F);
+      DomTreeUpdater DTU(PDT, DomTreeUpdater::UpdateStrategy::Eager);
+      Test(F, DTU);
+    });
 
-  // Test MergeBasicBlockIntoOnlyPred working under Eager UpdateStrategy with
-  // PDT.
-  resetIRReplaceEntry();
-  runWithDomTree(*M, "f", [&](Function &F, DominatorTree *DT) {
-    PostDominatorTree PDT = PostDominatorTree(F);
-    DomTreeUpdater DTU(PDT, DomTreeUpdater::UpdateStrategy::Eager);
-    Test(F, DTU);
-  });
+    // Test MergeBasicBlockIntoOnlyPred working under Lazy UpdateStrategy with
+    // both DT and PDT.
+    resetIRReplaceEntry();
+    runWithDomTree(*M, "f", [&](Function &F, DominatorTree *DT) {
+      PostDominatorTree PDT = PostDominatorTree(F);
+      DomTreeUpdater DTU(*DT, PDT, DomTreeUpdater::UpdateStrategy::Lazy);
+      Test(F, DTU);
+    });
 
-  // Test MergeBasicBlockIntoOnlyPred working under Lazy UpdateStrategy with
-  // both DT and PDT.
-  resetIRReplaceEntry();
-  runWithDomTree(*M, "f", [&](Function &F, DominatorTree *DT) {
-    PostDominatorTree PDT = PostDominatorTree(F);
-    DomTreeUpdater DTU(*DT, PDT, DomTreeUpdater::UpdateStrategy::Lazy);
-    Test(F, DTU);
-  });
+    // Test MergeBasicBlockIntoOnlyPred working under Lazy UpdateStrategy with
+    // PDT.
+    resetIRReplaceEntry();
+    runWithDomTree(*M, "f", [&](Function &F, DominatorTree *DT) {
+      PostDominatorTree PDT = PostDominatorTree(F);
+      DomTreeUpdater DTU(PDT, DomTreeUpdater::UpdateStrategy::Lazy);
+      Test(F, DTU);
+    });
 
-  // Test MergeBasicBlockIntoOnlyPred working under Lazy UpdateStrategy with
-  // PDT.
-  resetIRReplaceEntry();
-  runWithDomTree(*M, "f", [&](Function &F, DominatorTree *DT) {
-    PostDominatorTree PDT = PostDominatorTree(F);
-    DomTreeUpdater DTU(PDT, DomTreeUpdater::UpdateStrategy::Lazy);
-    Test(F, DTU);
-  });
-
-  // Test MergeBasicBlockIntoOnlyPred working under Lazy UpdateStrategy with DT.
-  resetIRReplaceEntry();
-  runWithDomTree(*M, "f", [&](Function &F, DominatorTree *DT) {
-    DomTreeUpdater DTU(*DT, DomTreeUpdater::UpdateStrategy::Lazy);
-    Test(F, DTU);
-  });
+    // Test MergeBasicBlockIntoOnlyPred working under Lazy UpdateStrategy with
+    DT. resetIRReplaceEntry(); runWithDomTree(*M, "f", [&](Function &F,
+    DominatorTree *DT) { DomTreeUpdater DTU(*DT,
+    DomTreeUpdater::UpdateStrategy::Lazy); Test(F, DTU);
+    });*/
 }
 
 TEST(Local, ConstantFoldTerminator) {
@@ -457,32 +457,33 @@ TEST(Local, ConstantFoldTerminator) {
     EXPECT_TRUE(DTU.getDomTree().verify());
     EXPECT_TRUE(DTU.getPostDomTree().verify());
   };
+  /*
+    // Test ConstantFoldTerminator under Eager UpdateStrategy.
+    runWithDomTree(*M, "br_same_dest", CFAllTerminatorsEager);
+    runWithDomTree(*M, "br_different_dest", CFAllTerminatorsEager);
+    runWithDomTree(*M, "switch_2_different_dest", CFAllTerminatorsEager);
+    runWithDomTree(*M, "switch_2_different_dest_default",
+    CFAllTerminatorsEager); runWithDomTree(*M, "switch_3_different_dest",
+    CFAllTerminatorsEager); runWithDomTree(*M, "switch_variable_2_default_dest",
+    CFAllTerminatorsEager); runWithDomTree(*M, "switch_constant_2_default_dest",
+    CFAllTerminatorsEager); runWithDomTree(*M,
+    "switch_constant_3_repeated_dest", CFAllTerminatorsEager);
+    runWithDomTree(*M, "indirectbr", CFAllTerminatorsEager);
+    runWithDomTree(*M, "indirectbr_repeated", CFAllTerminatorsEager);
+    runWithDomTree(*M, "indirectbr_unreachable", CFAllTerminatorsEager);
 
-  // Test ConstantFoldTerminator under Eager UpdateStrategy.
-  runWithDomTree(*M, "br_same_dest", CFAllTerminatorsEager);
-  runWithDomTree(*M, "br_different_dest", CFAllTerminatorsEager);
-  runWithDomTree(*M, "switch_2_different_dest", CFAllTerminatorsEager);
-  runWithDomTree(*M, "switch_2_different_dest_default", CFAllTerminatorsEager);
-  runWithDomTree(*M, "switch_3_different_dest", CFAllTerminatorsEager);
-  runWithDomTree(*M, "switch_variable_2_default_dest", CFAllTerminatorsEager);
-  runWithDomTree(*M, "switch_constant_2_default_dest", CFAllTerminatorsEager);
-  runWithDomTree(*M, "switch_constant_3_repeated_dest", CFAllTerminatorsEager);
-  runWithDomTree(*M, "indirectbr", CFAllTerminatorsEager);
-  runWithDomTree(*M, "indirectbr_repeated", CFAllTerminatorsEager);
-  runWithDomTree(*M, "indirectbr_unreachable", CFAllTerminatorsEager);
-
-  // Test ConstantFoldTerminator under Lazy UpdateStrategy.
-  runWithDomTree(*M, "br_same_dest", CFAllTerminatorsLazy);
-  runWithDomTree(*M, "br_different_dest", CFAllTerminatorsLazy);
-  runWithDomTree(*M, "switch_2_different_dest", CFAllTerminatorsLazy);
-  runWithDomTree(*M, "switch_2_different_dest_default", CFAllTerminatorsLazy);
-  runWithDomTree(*M, "switch_3_different_dest", CFAllTerminatorsLazy);
-  runWithDomTree(*M, "switch_variable_2_default_dest", CFAllTerminatorsLazy);
-  runWithDomTree(*M, "switch_constant_2_default_dest", CFAllTerminatorsLazy);
-  runWithDomTree(*M, "switch_constant_3_repeated_dest", CFAllTerminatorsLazy);
-  runWithDomTree(*M, "indirectbr", CFAllTerminatorsLazy);
-  runWithDomTree(*M, "indirectbr_repeated", CFAllTerminatorsLazy);
-  runWithDomTree(*M, "indirectbr_unreachable", CFAllTerminatorsLazy);
+    // Test ConstantFoldTerminator under Lazy UpdateStrategy.
+    runWithDomTree(*M, "br_same_dest", CFAllTerminatorsLazy);
+    runWithDomTree(*M, "br_different_dest", CFAllTerminatorsLazy);
+    runWithDomTree(*M, "switch_2_different_dest", CFAllTerminatorsLazy);
+    runWithDomTree(*M, "switch_2_different_dest_default", CFAllTerminatorsLazy);
+    runWithDomTree(*M, "switch_3_different_dest", CFAllTerminatorsLazy);
+    runWithDomTree(*M, "switch_variable_2_default_dest", CFAllTerminatorsLazy);
+    runWithDomTree(*M, "switch_constant_2_default_dest", CFAllTerminatorsLazy);
+    runWithDomTree(*M, "switch_constant_3_repeated_dest", CFAllTerminatorsLazy);
+    runWithDomTree(*M, "indirectbr", CFAllTerminatorsLazy);
+    runWithDomTree(*M, "indirectbr_repeated", CFAllTerminatorsLazy);
+    runWithDomTree(*M, "indirectbr_unreachable", CFAllTerminatorsLazy);*/
 }
 
 struct SalvageDebugInfoTest : ::testing::Test {

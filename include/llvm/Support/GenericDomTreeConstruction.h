@@ -33,7 +33,7 @@
 #ifndef LLVM_SUPPORT_GENERICDOMTREECONSTRUCTION_H
 #define LLVM_SUPPORT_GENERICDOMTREECONSTRUCTION_H
 
-#include <queue>
+#include "GenericDomTree.h"
 #include "llvm/ADT/ArrayRef.h"
 #include "llvm/ADT/DenseSet.h"
 #include "llvm/ADT/DepthFirstIterator.h"
@@ -41,6 +41,7 @@
 #include "llvm/ADT/SmallPtrSet.h"
 #include "llvm/Support/Debug.h"
 #include "llvm/Support/GenericDomTree.h"
+#include <queue>
 
 #define DEBUG_TYPE "dom-tree-builder"
 
@@ -1180,6 +1181,34 @@ struct SemiNCAInfo {
     for (UpdateT &U : BUI.Updates) {
       BUI.FutureSuccessors[U.getFrom()].push_back({U.getTo(), U.getKind()});
       BUI.FuturePredecessors[U.getTo()].push_back({U.getFrom(), U.getKind()});
+    }
+
+    for (UpdateT &U : BUI.Updates) {
+      auto *From = U.getFrom();
+      auto *To = U.getTo();
+      if (U.getKind() == UpdateKind::Delete) {
+        // Test whether From had a single succ.
+        // Test whether To had a single pred.
+        TreeNodePtr ToPtr = DT.getNode(To);
+        if (ToPtr && ToPtr->getIDom() == DT.getNode(From)) {
+          // Test whether is A->B removing A
+          if (pred_empty(From) && succ_empty(From)) {
+            if (BUI.FutureSuccessors[From].size() == 1) {
+              LLVM_DEBUG(dbgs()
+                         << From->getName() << " is removed and redirected to "
+                         << To->getName() << "\n");
+            }
+          }
+          // Test whether is A->B removing B
+          if (pred_empty(To) && succ_empty(To)) {
+            if (BUI.FuturePredecessors[To].size() == 1) {
+              LLVM_DEBUG(dbgs()
+                         << To->getName() << " is removed and redirected to "
+                         << From->getName() << "\n");
+            }
+          }
+        }
+      }
     }
 
     LLVM_DEBUG(dbgs() << "About to apply " << NumLegalized << " updates\n");
