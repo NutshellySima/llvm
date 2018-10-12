@@ -107,48 +107,6 @@ bool DomTreeUpdater::isSelfDominance(
   return Update.getFrom() == Update.getTo();
 }
 
-bool DomTreeUpdater::applyLazyUpdate(DominatorTree::UpdateKind Kind,
-                                     BasicBlock *From, BasicBlock *To) {
-  assert((DT || PDT) &&
-         "Call applyLazyUpdate() when both DT and PDT are nullptrs.");
-  assert(Strategy == DomTreeUpdater::UpdateStrategy::Lazy &&
-         "Call applyLazyUpdate() with Eager strategy error");
-  // Analyze pending updates to determine if the update is unnecessary.
-  const DominatorTree::UpdateType Update = {Kind, From, To};
-  const DominatorTree::UpdateType Invert = {Kind != DominatorTree::Insert
-                                                ? DominatorTree::Insert
-                                                : DominatorTree::Delete,
-                                            From, To};
-  // Only check duplicates in updates that are not applied by both trees.
-  auto I =
-      PendUpdates.begin() + std::max(PendDTUpdateIndex, PendPDTUpdateIndex);
-  const auto E = PendUpdates.end();
-
-  assert(I <= E && "Iterator out of range.");
-  DTUDeDuplicate.startTimer();
-
-  for (; I != E; ++I) {
-    if (Update == *I) {
-      ++NumDuplicatePruned;
-      DTUDeDuplicate.stopTimer();
-      return false; // Discard duplicate updates.
-    }
-    if (Invert == *I) {
-      // Update and Invert are both valid (equivalent to a no-op). Remove
-      // Invert from PendUpdates and discard the Update.
-      ++NumNoopPruned;
-      --NumLazyUpdate;
-      PendUpdates.erase(I);
-      DTUDeDuplicate.stopTimer();
-      return false;
-    }
-  }
-  DTUDeDuplicate.stopTimer();
-  ++NumLazyUpdate;
-  PendUpdates.push_back(Update); // Save the valid update.
-  return true;
-}
-
 void DomTreeUpdater::applyDomTreeUpdates() {
   // No pending DomTreeUpdates.
   if (Strategy != UpdateStrategy::Lazy || !DT)
@@ -350,15 +308,14 @@ void DomTreeUpdater::applyUpdates(ArrayRef<DominatorTree::UpdateType> Updates,
   if (Strategy == UpdateStrategy::Lazy || ForceRemoveDuplicates) {
     SmallVector<DominatorTree::UpdateType, 8> Seen;
     for (const auto U : Updates)
-      // For Lazy UpdateStrategy, avoid duplicates to applyLazyUpdate() to save
-      // on analysis.
+      // Deduplicate updates
       if (llvm::none_of(
               Seen,
               [U](const DominatorTree::UpdateType S) { return S == U; }) &&
           isUpdateValid(U) && !isSelfDominance(U)) {
         Seen.push_back(U);
         if (Strategy == UpdateStrategy::Lazy)
-          applyLazyUpdate(U.getKind(), U.getFrom(), U.getTo());
+          PendUpdates.push_back(U);
       }
     if (Strategy == UpdateStrategy::Lazy)
       return;
@@ -424,7 +381,7 @@ void DomTreeUpdater::insertEdge(BasicBlock *From, BasicBlock *To) {
     return;
   }
 
-  applyLazyUpdate(DominatorTree::Insert, From, To);
+  PendUpdates.push_back({DominatorTree::Insert, From, To});
 }
 
 void DomTreeUpdater::insertEdgeRelaxed(BasicBlock *From, BasicBlock *To) {
@@ -449,7 +406,7 @@ void DomTreeUpdater::insertEdgeRelaxed(BasicBlock *From, BasicBlock *To) {
     return;
   }
 
-  applyLazyUpdate(DominatorTree::Insert, From, To);
+  PendUpdates.push_back({DominatorTree::Insert, From, To});
 }
 
 void DomTreeUpdater::deleteEdge(BasicBlock *From, BasicBlock *To) {
@@ -478,7 +435,7 @@ void DomTreeUpdater::deleteEdge(BasicBlock *From, BasicBlock *To) {
     return;
   }
 
-  applyLazyUpdate(DominatorTree::Delete, From, To);
+  PendUpdates.push_back({DominatorTree::Delete, From, To});
 }
 
 void DomTreeUpdater::deleteEdgeRelaxed(BasicBlock *From, BasicBlock *To) {
@@ -503,7 +460,7 @@ void DomTreeUpdater::deleteEdgeRelaxed(BasicBlock *From, BasicBlock *To) {
     return;
   }
 
-  applyLazyUpdate(DominatorTree::Delete, From, To);
+  PendUpdates.push_back({DominatorTree::Delete, From, To});
 }
 
 void DomTreeUpdater::dropOutOfDateUpdates() {
