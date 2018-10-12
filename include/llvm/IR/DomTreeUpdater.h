@@ -221,11 +221,6 @@ private:
   /// Returns true if at least one BasicBlock is deleted.
   bool forceFlushDeletedBB();
 
-  /// Deduplicate and remove unnecessary updates (no-ops) when using Lazy
-  /// UpdateStrategy. Returns true if the update is queued for update.
-  bool applyLazyUpdate(DominatorTree::UpdateKind Kind, BasicBlock *From,
-                       BasicBlock *To);
-
   /// Helper function to apply all pending DomTree updates.
   void applyDomTreeUpdates();
 
