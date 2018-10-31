@@ -13,16 +13,69 @@
 //===----------------------------------------------------------------------===//
 
 #include "llvm/IR/DomTreeUpdater.h"
+#include "llvm/ADT/Statistic.h"
 #include "llvm/Analysis/PostDominators.h"
 #include "llvm/IR/Dominators.h"
 #include "llvm/Support/GenericDomTree.h"
+#include "llvm/Support/Timer.h"
 #include <algorithm>
 #include <functional>
-
 namespace llvm {
+
+#define DEBUG_TYPE "DTU-stats"
+
+STATISTIC(NumNoopPruned, "Number of no-ops removed");
+STATISTIC(NumDuplicatePruned, "Number of duplicates removed");
+STATISTIC(NumInvalidPruned, "Number of invalid updates discarded");
+STATISTIC(NumRecalculate, "Number of recalculations requested");
+STATISTIC(NumLazyUpdate, "Number of lazy updates applied");
+
+#undef DEBUG_TYPE
+
+static TimerGroup DTTimerGroup("DomTree Timer", "DomTree Calculation");
+static Timer DTApplyUpdatesTimer("domtree-au", "apply-updates -- DomTree",
+                                 DTTimerGroup);
+static Timer DTInsertEdgeTimer("domtree-ie", "insert-edge -- DomTree",
+                               DTTimerGroup);
+static Timer DTDeleteEdgeTimer("domtree-de", "delete-edge -- DomTree",
+                               DTTimerGroup);
+static Timer DTRecalculateTimer("domtree-re", "recalculate -- DomTree",
+                                DTTimerGroup);
+static Timer PDTApplyUpdatesTimer("pdomtree-au", "apply-updates -- PostDomTree",
+                                  DTTimerGroup);
+static Timer PDTInsertEdgeTimer("pdomtree-ie", "insert-edge -- PostDomTree",
+                                DTTimerGroup);
+static Timer PDTDeleteEdgeTimer("pdomtree-de", "delete-edge -- PostDomTree",
+                                DTTimerGroup);
+static Timer PDTRecalculateTimer("pdomtree-re", "recalculate -- PostDomTree",
+                                 DTTimerGroup);
+static Timers DTTimers(DTApplyUpdatesTimer, DTInsertEdgeTimer,
+                       DTDeleteEdgeTimer, DTRecalculateTimer,
+                       PDTApplyUpdatesTimer, PDTInsertEdgeTimer,
+                       PDTDeleteEdgeTimer, PDTRecalculateTimer);
+static TimerGroup DTUTimerGroup("DTU Timer", "DTU timing");
+static Timer DTUApplyUpdatesTimer("domtree-au", "apply-updates -- DomTree",
+                                  DTUTimerGroup);
+static Timer DTUInsertEdgeTimer("domtree-ie", "insert-edge -- DomTree",
+                                DTUTimerGroup);
+static Timer DTUDeleteEdgeTimer("domtree-de", "delete-edge -- DomTree",
+                                DTUTimerGroup);
+static Timer DTURecalculateTimer("domtree-re", "recalculate -- DomTree",
+                                 DTUTimerGroup);
+static Timer PDTUApplyUpdatesTimer("pdomtree-au",
+                                   "apply-updates -- PostDomTree",
+                                   DTUTimerGroup);
+static Timer PDTUInsertEdgeTimer("pdomtree-ie", "insert-edge -- PostDomTree",
+                                 DTUTimerGroup);
+static Timer PDTUDeleteEdgeTimer("pdomtree-de", "delete-edge -- PostDomTree",
+                                 DTUTimerGroup);
+static Timer PDTURecalculateTimer("pdomtree-re", "recalculate -- PostDomTree",
+                                  DTUTimerGroup);
+static Timer DTUDeDuplicate("dtu-dedup", "Deduplication", DTUTimerGroup);
 
 bool DomTreeUpdater::isUpdateValid(
     const DominatorTree::UpdateType Update) const {
+  ++NumInvalidPruned;
   const auto *From = Update.getFrom();
   const auto *To = Update.getTo();
   const auto Kind = Update.getKind();
@@ -44,7 +97,7 @@ bool DomTreeUpdater::isUpdateValid(
   // Edge exists in IR.
   if (Kind == DominatorTree::Delete && HasEdge)
     return false;
-
+  --NumInvalidPruned;
   return true;
 }
 
@@ -72,19 +125,26 @@ bool DomTreeUpdater::applyLazyUpdate(DominatorTree::UpdateKind Kind,
   const auto E = PendUpdates.end();
 
   assert(I <= E && "Iterator out of range.");
+  DTUDeDuplicate.startTimer();
 
   for (; I != E; ++I) {
-    if (Update == *I)
+    if (Update == *I) {
+      ++NumDuplicatePruned;
+      DTUDeDuplicate.stopTimer();
       return false; // Discard duplicate updates.
-
+    }
     if (Invert == *I) {
       // Update and Invert are both valid (equivalent to a no-op). Remove
       // Invert from PendUpdates and discard the Update.
+      ++NumNoopPruned;
+      --NumLazyUpdate;
       PendUpdates.erase(I);
+      DTUDeDuplicate.stopTimer();
       return false;
     }
   }
-
+  DTUDeDuplicate.stopTimer();
+  ++NumLazyUpdate;
   PendUpdates.push_back(Update); // Save the valid update.
   return true;
 }
@@ -99,7 +159,9 @@ void DomTreeUpdater::applyDomTreeUpdates() {
     const auto I = PendUpdates.begin() + PendDTUpdateIndex;
     const auto E = PendUpdates.end();
     assert(I < E && "Iterator range invalid; there should be DomTree updates.");
+    DTUApplyUpdatesTimer.startTimer();
     DT->applyUpdates(ArrayRef<DominatorTree::UpdateType>(I, E));
+    DTUApplyUpdatesTimer.stopTimer();
     PendDTUpdateIndex = PendUpdates.size();
   }
 }
@@ -121,7 +183,9 @@ void DomTreeUpdater::applyPostDomTreeUpdates() {
     const auto E = PendUpdates.end();
     assert(I < E &&
            "Iterator range invalid; there should be PostDomTree updates.");
+    PDTUApplyUpdatesTimer.startTimer();
     PDT->applyUpdates(ArrayRef<DominatorTree::UpdateType>(I, E));
+    PDTUApplyUpdatesTimer.stopTimer();
     PendPDTUpdateIndex = PendUpdates.size();
   }
 }
@@ -156,9 +220,17 @@ void DomTreeUpdater::recalculate(Function &F) {
 
   if (Strategy == UpdateStrategy::Eager) {
     if (DT)
+      ++NumRecalculate;
+    if (PDT)
+      ++NumRecalculate;
+    DTURecalculateTimer.startTimer();
+    if (DT)
       DT->recalculate(F);
+    DTURecalculateTimer.stopTimer();
+    PDTURecalculateTimer.startTimer();
     if (PDT)
       PDT->recalculate(F);
+    PDTURecalculateTimer.stopTimer();
     return;
   }
 
@@ -172,9 +244,17 @@ void DomTreeUpdater::recalculate(Function &F) {
   // flush awaiting deleted BasicBlocks.
   forceFlushDeletedBB();
   if (DT)
+    ++NumRecalculate;
+  if (PDT)
+    ++NumRecalculate;
+  DTURecalculateTimer.startTimer();
+  if (DT)
     DT->recalculate(F);
+  DTURecalculateTimer.stopTimer();
+  PDTURecalculateTimer.startTimer();
   if (PDT)
     PDT->recalculate(F);
+  PDTURecalculateTimer.stopTimer();
 
   // Resume forceFlushDeletedBB() to erase DomTree or PostDomTree nodes.
   IsRecalculatingDomTree = IsRecalculatingPostDomTree = false;
@@ -283,17 +363,25 @@ void DomTreeUpdater::applyUpdates(ArrayRef<DominatorTree::UpdateType> Updates,
     if (Strategy == UpdateStrategy::Lazy)
       return;
 
+    DTUApplyUpdatesTimer.startTimer();
     if (DT)
       DT->applyUpdates(Seen);
+    DTUApplyUpdatesTimer.stopTimer();
+    PDTUApplyUpdatesTimer.startTimer();
     if (PDT)
       PDT->applyUpdates(Seen);
+    PDTUApplyUpdatesTimer.stopTimer();
     return;
   }
 
+  DTUApplyUpdatesTimer.startTimer();
   if (DT)
     DT->applyUpdates(Updates);
+  DTUApplyUpdatesTimer.stopTimer();
+  PDTUApplyUpdatesTimer.startTimer();
   if (PDT)
     PDT->applyUpdates(Updates);
+  PDTUApplyUpdatesTimer.stopTimer();
 }
 
 DominatorTree &DomTreeUpdater::getDomTree() {
@@ -325,10 +413,14 @@ void DomTreeUpdater::insertEdge(BasicBlock *From, BasicBlock *To) {
     return;
 
   if (Strategy == UpdateStrategy::Eager) {
+    DTUInsertEdgeTimer.startTimer();
     if (DT)
       DT->insertEdge(From, To);
+    DTUInsertEdgeTimer.stopTimer();
+    PDTUInsertEdgeTimer.startTimer();
     if (PDT)
       PDT->insertEdge(From, To);
+    PDTUInsertEdgeTimer.stopTimer();
     return;
   }
 
@@ -346,10 +438,14 @@ void DomTreeUpdater::insertEdgeRelaxed(BasicBlock *From, BasicBlock *To) {
     return;
 
   if (Strategy == UpdateStrategy::Eager) {
+    DTUInsertEdgeTimer.startTimer();
     if (DT)
       DT->insertEdge(From, To);
+    DTUInsertEdgeTimer.stopTimer();
+    PDTUInsertEdgeTimer.startTimer();
     if (PDT)
       PDT->insertEdge(From, To);
+    PDTUInsertEdgeTimer.stopTimer();
     return;
   }
 
@@ -371,10 +467,14 @@ void DomTreeUpdater::deleteEdge(BasicBlock *From, BasicBlock *To) {
     return;
 
   if (Strategy == UpdateStrategy::Eager) {
+    DTUDeleteEdgeTimer.startTimer();
     if (DT)
       DT->deleteEdge(From, To);
+    DTUDeleteEdgeTimer.stopTimer();
+    PDTUDeleteEdgeTimer.startTimer();
     if (PDT)
       PDT->deleteEdge(From, To);
+    PDTUDeleteEdgeTimer.stopTimer();
     return;
   }
 
@@ -392,10 +492,14 @@ void DomTreeUpdater::deleteEdgeRelaxed(BasicBlock *From, BasicBlock *To) {
     return;
 
   if (Strategy == UpdateStrategy::Eager) {
+    DTUDeleteEdgeTimer.startTimer();
     if (DT)
       DT->deleteEdge(From, To);
+    DTUDeleteEdgeTimer.stopTimer();
+    PDTUDeleteEdgeTimer.startTimer();
     if (PDT)
       PDT->deleteEdge(From, To);
+    PDTUDeleteEdgeTimer.stopTimer();
     return;
   }
 

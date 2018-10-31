@@ -31,6 +31,7 @@
 #include "llvm/ADT/SmallPtrSet.h"
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/Support/CFGUpdate.h"
+#include "llvm/Support/Timer.h"
 #include "llvm/Support/raw_ostream.h"
 #include <algorithm>
 #include <cassert>
@@ -42,6 +43,35 @@
 #include <vector>
 
 namespace llvm {
+struct Timers;
+
+inline Timers *&GetTimers() {
+  static Timers *TimersPtr = nullptr;
+  return TimersPtr;
+}
+
+struct Timers {
+  Timer &DTApplyUpdatesTimer, &DTInsertEdgeTimer, &DTDeleteEdgeTimer,
+      &DTRecalculateTimer, &PDTApplyUpdatesTimer, &PDTInsertEdgeTimer,
+      &PDTDeleteEdgeTimer, &PDTRecalculateTimer;
+
+  Timers(Timer &DTApplyUpdatesTimer_, Timer &DTInsertEdgeTimer_,
+         Timer &DTDeleteEdgeTimer_, Timer &DTRecalculateTimer_,
+         Timer &PDTApplyUpdatesTimer_, Timer &PDTInsertEdgeTimer_,
+         Timer &PDTDeleteEdgeTimer_, Timer &PDTRecalculateTimer_)
+      : DTApplyUpdatesTimer(DTApplyUpdatesTimer_),
+        DTInsertEdgeTimer(DTInsertEdgeTimer_),
+        DTDeleteEdgeTimer(DTDeleteEdgeTimer_),
+        DTRecalculateTimer(DTRecalculateTimer_),
+        PDTApplyUpdatesTimer(PDTApplyUpdatesTimer_),
+        PDTInsertEdgeTimer(PDTInsertEdgeTimer_),
+        PDTDeleteEdgeTimer(PDTDeleteEdgeTimer_),
+        PDTRecalculateTimer(PDTRecalculateTimer_) {
+
+    llvm::GetTimers() = this;
+  }
+  static Timers *getTimers() { return GetTimers(); }
+};
 
 template <typename NodeT, bool IsPostDom>
 class DominatorTreeBase;
@@ -519,7 +549,16 @@ protected:
   /// \param Updates An unordered sequence of updates to perform.
   ///
   void applyUpdates(ArrayRef<UpdateType> Updates) {
+    if (!Timers::getTimers()) {
+      DomTreeBuilder::ApplyUpdates(*this, Updates);
+      return;
+    }
+    Timer *T = &Timers::getTimers()->DTApplyUpdatesTimer;
+    if (this->isPostDominator())
+      T = &Timers::getTimers()->PDTApplyUpdatesTimer;
+    T->startTimer();
     DomTreeBuilder::ApplyUpdates(*this, Updates);
+    T->stopTimer();
   }
 
   /// Inform the dominator tree about a CFG edge insertion and update the tree.
@@ -536,7 +575,16 @@ protected:
     assert(To);
     assert(From->getParent() == Parent);
     assert(To->getParent() == Parent);
+    if (!Timers::getTimers()) {
+      DomTreeBuilder::InsertEdge(*this, From, To);
+      return;
+    }
+    Timer *T = &Timers::getTimers()->DTInsertEdgeTimer;
+    if (this->isPostDominator())
+      T = &Timers::getTimers()->PDTInsertEdgeTimer;
+    T->startTimer();
     DomTreeBuilder::InsertEdge(*this, From, To);
+    T->stopTimer();
   }
 
   /// Inform the dominator tree about a CFG edge deletion and update the tree.
@@ -554,7 +602,16 @@ protected:
     assert(To);
     assert(From->getParent() == Parent);
     assert(To->getParent() == Parent);
+    if (!Timers::getTimers()) {
+      DomTreeBuilder::DeleteEdge(*this, From, To);
+      return;
+    }
+    Timer *T = &Timers::getTimers()->DTDeleteEdgeTimer;
+    if (this->isPostDominator())
+      T = &Timers::getTimers()->PDTDeleteEdgeTimer;
+    T->startTimer();
     DomTreeBuilder::DeleteEdge(*this, From, To);
+    T->stopTimer();
   }
 
   /// Add a new node to the dominator tree information.
@@ -731,7 +788,16 @@ public:
   /// recalculate - compute a dominator tree for the given function
   void recalculate(ParentType &Func) {
     Parent = &Func;
+    if (!Timers::getTimers()) {
+      DomTreeBuilder::Calculate(*this);
+      return;
+    }
+    Timer *T = &Timers::getTimers()->DTRecalculateTimer;
+    if (this->isPostDominator())
+      T = &Timers::getTimers()->PDTRecalculateTimer;
+    T->startTimer();
     DomTreeBuilder::Calculate(*this);
+    T->stopTimer();
   }
 
   void recalculate(ParentType &Func, ArrayRef<UpdateType> Updates) {
