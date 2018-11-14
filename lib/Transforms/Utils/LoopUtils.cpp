@@ -42,7 +42,7 @@ using namespace llvm::PatternMatch;
 
 #define DEBUG_TYPE "loop-utils"
 
-bool llvm::formDedicatedExitBlocks(Loop *L, DominatorTree *DT, LoopInfo *LI,
+bool llvm::formDedicatedExitBlocks(Loop *L, DomTreeUpdater *DTU, LoopInfo *LI,
                                    bool PreserveLCSSA) {
   bool Changed = false;
 
@@ -75,7 +75,7 @@ bool llvm::formDedicatedExitBlocks(Loop *L, DominatorTree *DT, LoopInfo *LI,
       return false;
 
     auto *NewExitBB = SplitBlockPredecessors(
-        BB, InLoopPredecessors, ".loopexit", DT, LI, nullptr, PreserveLCSSA);
+        BB, InLoopPredecessors, ".loopexit", DTU, LI, nullptr, PreserveLCSSA);
 
     if (!NewExitBB)
       LLVM_DEBUG(
@@ -242,9 +242,12 @@ llvm::collectChildrenInLoop(DomTreeNode *N, const Loop *CurLoop) {
   return Worklist;
 }
 
-void llvm::deleteDeadLoop(Loop *L, DominatorTree *DT = nullptr,
+void llvm::deleteDeadLoop(Loop *L, DomTreeUpdater *DTU = nullptr,
                           ScalarEvolution *SE = nullptr,
                           LoopInfo *LI = nullptr) {
+  DominatorTree *DT = nullptr;
+  if (DTU && DTU->hasDomTree())
+    DT = &DTU->getDomTree();
   assert((!DT || L->isLCSSAForm(*DT)) && "Expected LCSSA!");
   auto *Preheader = L->getLoopPreheader();
   assert(Preheader && "Preheader should exist!");
@@ -327,13 +330,12 @@ void llvm::deleteDeadLoop(Loop *L, DominatorTree *DT = nullptr,
   // Remove the old branch.
   Preheader->getTerminator()->eraseFromParent();
 
-  DomTreeUpdater DTU(DT, DomTreeUpdater::UpdateStrategy::Eager);
-  if (DT) {
+  if (DTU) {
     // Update the dominator tree by informing it about the new edge from the
     // preheader to the exit.
-    DTU.insertEdge(Preheader, ExitBlock);
+    DTU->insertEdge(Preheader, ExitBlock);
     // Inform the dominator tree about the removed edge.
-    DTU.deleteEdge(Preheader, L->getHeader());
+    DTU->deleteEdge(Preheader, L->getHeader());
   }
 
   // Given LCSSA form is satisfied, we should not have users of instructions

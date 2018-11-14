@@ -84,17 +84,17 @@ void ReplaceInstWithInst(Instruction *From, Instruction *To);
 /// This provides a builder interface for overriding the default options used
 /// during critical edge splitting.
 struct CriticalEdgeSplittingOptions {
-  DominatorTree *DT;
+  DomTreeUpdater *DTU;
   LoopInfo *LI;
   MemorySSAUpdater *MSSAU;
   bool MergeIdenticalEdges = false;
   bool DontDeleteUselessPHIs = false;
   bool PreserveLCSSA = false;
 
-  CriticalEdgeSplittingOptions(DominatorTree *DT = nullptr,
+  CriticalEdgeSplittingOptions(DomTreeUpdater *DTU = nullptr,
                                LoopInfo *LI = nullptr,
                                MemorySSAUpdater *MSSAU = nullptr)
-      : DT(DT), LI(LI), MSSAU(MSSAU) {}
+      : DTU(DTU), LI(LI), MSSAU(MSSAU) {}
 
   CriticalEdgeSplittingOptions &setMergeIdenticalEdges() {
     MergeIdenticalEdges = true;
@@ -180,7 +180,7 @@ unsigned SplitAllCriticalEdges(Function &F,
 
 /// Split the edge connecting specified block.
 BasicBlock *SplitEdge(BasicBlock *From, BasicBlock *To,
-                      DominatorTree *DT = nullptr, LoopInfo *LI = nullptr,
+                      DomTreeUpdater *DTU = nullptr, LoopInfo *LI = nullptr,
                       MemorySSAUpdater *MSSAU = nullptr);
 
 /// Split the specified block at the specified instruction - everything before
@@ -188,7 +188,7 @@ BasicBlock *SplitEdge(BasicBlock *From, BasicBlock *To,
 /// block. The two blocks are joined by an unconditional branch and the loop
 /// info is updated.
 BasicBlock *SplitBlock(BasicBlock *Old, Instruction *SplitPt,
-                       DominatorTree *DT = nullptr, LoopInfo *LI = nullptr,
+                       DomTreeUpdater *DTU = nullptr, LoopInfo *LI = nullptr,
                        MemorySSAUpdater *MSSAU = nullptr);
 
 /// This method introduces at least one new basic block into the function and
@@ -207,7 +207,7 @@ BasicBlock *SplitBlock(BasicBlock *Old, Instruction *SplitPt,
 /// split is an exit of a loop with other exits).
 BasicBlock *SplitBlockPredecessors(BasicBlock *BB, ArrayRef<BasicBlock *> Preds,
                                    const char *Suffix,
-                                   DominatorTree *DT = nullptr,
+                                   DomTreeUpdater *DTU = nullptr,
                                    LoopInfo *LI = nullptr,
                                    MemorySSAUpdater *MSSAU = nullptr,
                                    bool PreserveLCSSA = false);
@@ -226,7 +226,7 @@ BasicBlock *SplitBlockPredecessors(BasicBlock *BB, ArrayRef<BasicBlock *> Preds,
 void SplitLandingPadPredecessors(
     BasicBlock *OrigBB, ArrayRef<BasicBlock *> Preds, const char *Suffix,
     const char *Suffix2, SmallVectorImpl<BasicBlock *> &NewBBs,
-    DominatorTree *DT = nullptr, LoopInfo *LI = nullptr,
+    DomTreeUpdater *DTU = nullptr, LoopInfo *LI = nullptr,
     MemorySSAUpdater *MSSAU = nullptr, bool PreserveLCSSA = false);
 
 /// This method duplicates the specified return instruction into a predecessor
@@ -260,7 +260,7 @@ ReturnInst *FoldReturnIntoUncondBranch(ReturnInst *RI, BasicBlock *BB,
 Instruction *SplitBlockAndInsertIfThen(Value *Cond, Instruction *SplitBefore,
                                        bool Unreachable,
                                        MDNode *BranchWeights = nullptr,
-                                       DominatorTree *DT = nullptr,
+                                       DomTreeUpdater *DTU = nullptr,
                                        LoopInfo *LI = nullptr);
 
 /// SplitBlockAndInsertIfThenElse is similar to SplitBlockAndInsertIfThen,

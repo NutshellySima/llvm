@@ -292,6 +292,7 @@ static void hoistLoopToNewParent(Loop &L, BasicBlock &Preheader,
   // Remove this loops blocks from the old parent and every other loop up the
   // nest until reaching the new parent. Also update all of these
   // no-longer-containing loops to reflect the nesting change.
+  DomTreeUpdater DTU(DT, DomTreeUpdater::UpdateStrategy::Eager);
   for (Loop *OldContainingL = OldParentL; OldContainingL != NewParentL;
        OldContainingL = OldContainingL->getParentLoop()) {
     llvm::erase_if(OldContainingL->getBlocksVector(),
@@ -313,7 +314,7 @@ static void hoistLoopToNewParent(Loop &L, BasicBlock &Preheader,
     // unswitching it is possible to get new non-dedicated exits out of parent
     // loop so let's conservatively form dedicated exit blocks and figure out
     // if we can optimize later.
-    formDedicatedExitBlocks(OldContainingL, &DT, &LI, /*PreserveLCSSA*/ true);
+    formDedicatedExitBlocks(OldContainingL, &DTU, &LI, /*PreserveLCSSA*/ true);
   }
 }
 
@@ -412,8 +413,9 @@ static bool unswitchTrivialBranch(Loop &L, BranchInst &BI, DominatorTree &DT,
   // Split the preheader, so that we know that there is a safe place to insert
   // the conditional branch. We will change the preheader to have a conditional
   // branch on LoopCond.
+  DomTreeUpdater DTU(DT, DomTreeUpdater::UpdateStrategy::Eager);
   BasicBlock *OldPH = L.getLoopPreheader();
-  BasicBlock *NewPH = SplitEdge(OldPH, L.getHeader(), &DT, &LI);
+  BasicBlock *NewPH = SplitEdge(OldPH, L.getHeader(), &DTU, &LI);
 
   // Now that we have a place to insert the conditional branch, create a place
   // to branch to: this is the exit block out of the loop that we are
@@ -425,7 +427,7 @@ static bool unswitchTrivialBranch(Loop &L, BranchInst &BI, DominatorTree &DT,
            "A branch's parent isn't a predecessor!");
     UnswitchedBB = LoopExitBB;
   } else {
-    UnswitchedBB = SplitBlock(LoopExitBB, &LoopExitBB->front(), &DT, &LI);
+    UnswitchedBB = SplitBlock(LoopExitBB, &LoopExitBB->front(), &DTU, &LI);
   }
 
   // Actually move the invariant uses into the unswitched position. If possible,
@@ -524,6 +526,7 @@ static bool unswitchTrivialBranch(Loop &L, BranchInst &BI, DominatorTree &DT,
 /// invalidated by this.
 static bool unswitchTrivialSwitch(Loop &L, SwitchInst &SI, DominatorTree &DT,
                                   LoopInfo &LI, ScalarEvolution *SE) {
+  DomTreeUpdater DTU(DT, DomTreeUpdater::UpdateStrategy::Lazy);
   LLVM_DEBUG(dbgs() << "  Trying to unswitch switch: " << SI << "\n");
   Value *LoopCond = SI.getCondition();
 
@@ -612,7 +615,7 @@ static bool unswitchTrivialSwitch(Loop &L, SwitchInst &SI, DominatorTree &DT,
   // Split the preheader, so that we know that there is a safe place to insert
   // the switch.
   BasicBlock *OldPH = L.getLoopPreheader();
-  BasicBlock *NewPH = SplitEdge(OldPH, L.getHeader(), &DT, &LI);
+  BasicBlock *NewPH = SplitEdge(OldPH, L.getHeader(), &DTU, &LI);
   OldPH->getTerminator()->eraseFromParent();
 
   // Now add the unswitched switch.
@@ -635,7 +638,7 @@ static bool unswitchTrivialSwitch(Loop &L, SwitchInst &SI, DominatorTree &DT,
       rewritePHINodesForUnswitchedExitBlock(*DefaultExitBB, *ParentBB, *OldPH);
     } else {
       auto *SplitBB =
-          SplitBlock(DefaultExitBB, &DefaultExitBB->front(), &DT, &LI);
+          SplitBlock(DefaultExitBB, &DefaultExitBB->front(), &DTU, &LI);
       rewritePHINodesForExitAndUnswitchedBlocks(
           *DefaultExitBB, *SplitBB, *ParentBB, *OldPH, /*FullUnswitch*/ true);
       DefaultExitBB = SplitExitBBMap[DefaultExitBB] = SplitBB;
@@ -661,7 +664,7 @@ static bool unswitchTrivialSwitch(Loop &L, SwitchInst &SI, DominatorTree &DT,
     BasicBlock *&SplitExitBB = SplitExitBBMap[ExitBB];
     if (!SplitExitBB) {
       // If this is the first time we see this, do the split and remember it.
-      SplitExitBB = SplitBlock(ExitBB, &ExitBB->front(), &DT, &LI);
+      SplitExitBB = SplitBlock(ExitBB, &ExitBB->front(), &DTU, &LI);
       rewritePHINodesForExitAndUnswitchedBlocks(
           *ExitBB, *SplitExitBB, *ParentBB, *OldPH, /*FullUnswitch*/ true);
     }
@@ -739,7 +742,8 @@ static bool unswitchTrivialSwitch(Loop &L, SwitchInst &SI, DominatorTree &DT,
     DTUpdates.push_back({DT.Delete, ParentBB, UnswitchedBB});
     DTUpdates.push_back({DT.Insert, OldPH, UnswitchedBB});
   }
-  DT.applyUpdates(DTUpdates);
+  DTU.applyUpdates(DTUpdates);
+  DTU.flush();
   assert(DT.verify(DominatorTree::VerificationLevel::Fast));
 
   // We may have changed the nesting relationship for this loop so hoist it to
@@ -929,7 +933,8 @@ static BasicBlock *buildClonedLoopBlocks(
     // place to merge the CFG, so split the exit first. This is always safe to
     // do because there cannot be any non-loop predecessors of a loop exit in
     // loop simplified form.
-    auto *MergeBB = SplitBlock(ExitBB, &ExitBB->front(), &DT, &LI);
+    DomTreeUpdater DTU(DT, DomTreeUpdater::UpdateStrategy::Eager);
+    auto *MergeBB = SplitBlock(ExitBB, &ExitBB->front(), &DTU, &LI);
 
     // Rearrange the names to make it easier to write test cases by having the
     // exit block carry the suffix rather than the merge block carrying the
@@ -1908,8 +1913,9 @@ static void unswitchNontrivialInvariants(
   // branch on LoopCond. The original preheader will become the split point
   // between the unswitched versions, and we will have a new preheader for the
   // original loop.
+  DomTreeUpdater DTU(DT, DomTreeUpdater::UpdateStrategy::Eager);
   BasicBlock *SplitBB = L.getLoopPreheader();
-  BasicBlock *LoopPH = SplitEdge(SplitBB, L.getHeader(), &DT, &LI);
+  BasicBlock *LoopPH = SplitEdge(SplitBB, L.getHeader(), &DTU, &LI);
 
   // Keep track of the dominator tree updates needed.
   SmallVector<DominatorTree::UpdateType, 4> DTUpdates;
@@ -2111,7 +2117,8 @@ static void unswitchNontrivialInvariants(
     // introduced new, non-dedicated exits. At least try to re-form dedicated
     // exits for these loops. This may fail if they couldn't have dedicated
     // exits to start with.
-    formDedicatedExitBlocks(&UpdateL, &DT, &LI, /*PreserveLCSSA*/ true);
+    DomTreeUpdater DTU(DT, DomTreeUpdater::UpdateStrategy::Eager);
+    formDedicatedExitBlocks(&UpdateL, &DTU, &LI, /*PreserveLCSSA*/ true);
   };
 
   // For non-child cloned loops and hoisted loops, we just need to update LCSSA

@@ -1226,8 +1226,9 @@ static BasicBlock *
 normalizeForInvokeSafepoint(BasicBlock *BB, BasicBlock *InvokeParent,
                             DominatorTree &DT) {
   BasicBlock *Ret = BB;
+  DomTreeUpdater DTU(DT, DomTreeUpdater::UpdateStrategy::Eager);
   if (!BB->getUniquePredecessor())
-    Ret = SplitBlockPredecessors(BB, InvokeParent, "", &DT);
+    Ret = SplitBlockPredecessors(BB, InvokeParent, "", &DTU);
 
   // Now that 'Ret' has unique predecessor we can safely remove all phi nodes
   // from it

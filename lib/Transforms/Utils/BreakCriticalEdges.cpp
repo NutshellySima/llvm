@@ -25,6 +25,7 @@
 #include "llvm/Analysis/LoopInfo.h"
 #include "llvm/Analysis/MemorySSAUpdater.h"
 #include "llvm/IR/CFG.h"
+#include "llvm/IR/DomTreeUpdater.h"
 #include "llvm/IR/Dominators.h"
 #include "llvm/IR/Instructions.h"
 #include "llvm/IR/Type.h"
@@ -49,10 +50,13 @@ namespace {
     bool runOnFunction(Function &F) override {
       auto *DTWP = getAnalysisIfAvailable<DominatorTreeWrapperPass>();
       auto *DT = DTWP ? &DTWP->getDomTree() : nullptr;
+      auto *PDTWP = getAnalysisIfAvailable<PostDominatorTreeWrapperPass>();
+      auto *PDT = PDTWP ? &PDTWP->getPostDomTree() : nullptr;
       auto *LIWP = getAnalysisIfAvailable<LoopInfoWrapperPass>();
       auto *LI = LIWP ? &LIWP->getLoopInfo() : nullptr;
+      auto DTU = DomTreeUpdater(DT, PDT, DomTreeUpdater::UpdateStrategy::Eager);
       unsigned N =
-          SplitAllCriticalEdges(F, CriticalEdgeSplittingOptions(DT, LI));
+          SplitAllCriticalEdges(F, CriticalEdgeSplittingOptions(&DTU, LI));
       NumBroken += N;
       return N > 0;
     }
@@ -80,8 +84,10 @@ FunctionPass *llvm::createBreakCriticalEdgesPass() {
 PreservedAnalyses BreakCriticalEdgesPass::run(Function &F,
                                               FunctionAnalysisManager &AM) {
   auto *DT = AM.getCachedResult<DominatorTreeAnalysis>(F);
+  auto *PDT = AM.getCachedResult<PostDominatorTreeAnalysis>(F);
   auto *LI = AM.getCachedResult<LoopAnalysis>(F);
-  unsigned N = SplitAllCriticalEdges(F, CriticalEdgeSplittingOptions(DT, LI));
+  auto DTU = DomTreeUpdater(DT, PDT, DomTreeUpdater::UpdateStrategy::Eager);
+  unsigned N = SplitAllCriticalEdges(F, CriticalEdgeSplittingOptions(&DTU, LI));
   NumBroken += N;
   if (N == 0)
     return PreservedAnalyses::all();
@@ -197,17 +203,17 @@ llvm::SplitCriticalEdge(Instruction *TI, unsigned SuccNum,
   }
 
   // If we have nothing to update, just return.
-  auto *DT = Options.DT;
+  auto *DTU = Options.DTU;
   auto *LI = Options.LI;
   auto *MSSAU = Options.MSSAU;
   if (MSSAU)
     MSSAU->wireOldPredecessorsToNewImmediatePredecessor(
         DestBB, NewBB, {TIBB}, Options.MergeIdenticalEdges);
 
-  if (!DT && !LI)
+  if (!DTU && !LI)
     return NewBB;
 
-  if (DT) {
+  if (DTU) {
     // Update the DominatorTree.
     //       ---> NewBB -----\
     //      /                 V
@@ -223,7 +229,7 @@ llvm::SplitCriticalEdge(Instruction *TI, unsigned SuccNum,
     if (llvm::find(successors(TIBB), DestBB) == succ_end(TIBB))
       Updates.push_back({DominatorTree::Delete, TIBB, DestBB});
 
-    DT->applyUpdates(Updates);
+    DTU->applyUpdates(Updates);
   }
 
   // Update LoopInfo if it is around.
@@ -288,8 +294,9 @@ llvm::SplitCriticalEdge(Instruction *TI, unsigned SuccNum,
         }
         if (!LoopPreds.empty()) {
           assert(!DestBB->isEHPad() && "We don't split edges to EH pads!");
-          BasicBlock *NewExitBB = SplitBlockPredecessors(
-              DestBB, LoopPreds, "split", DT, LI, MSSAU, Options.PreserveLCSSA);
+          BasicBlock *NewExitBB =
+              SplitBlockPredecessors(DestBB, LoopPreds, "split", DTU, LI, MSSAU,
+                                     Options.PreserveLCSSA);
           if (Options.PreserveLCSSA)
             createPHIsForSplitLoopExit(LoopPreds, NewExitBB, DestBB);
         }

@@ -229,7 +229,7 @@ TEST_F(CloneInstruction, DuplicateInstructionsToSplit) {
   ValueToValueMapTy Mapping;
   DomTreeUpdater DTU(DomTreeUpdater::UpdateStrategy::Lazy);
   auto Split =
-      DuplicateInstructionsInSplitBetween(BB2, BB1, SubInst, Mapping, DTU);
+      DuplicateInstructionsInSplitBetween(BB2, BB1, SubInst, Mapping, &DTU);
 
   EXPECT_TRUE(Split);
   EXPECT_EQ(Mapping.size(), 2u);
@@ -278,7 +278,7 @@ TEST_F(CloneInstruction, DuplicateInstructionsToSplitBlocksEq1) {
   DomTreeUpdater DTU(DomTreeUpdater::UpdateStrategy::Lazy);
   ValueToValueMapTy Mapping;
   auto Split = DuplicateInstructionsInSplitBetween(
-      BB2, BB2, BB2->getTerminator(), Mapping, DTU);
+      BB2, BB2, BB2->getTerminator(), Mapping, &DTU);
 
   EXPECT_TRUE(Split);
   EXPECT_EQ(Mapping.size(), 3u);
@@ -331,7 +331,7 @@ TEST_F(CloneInstruction, DuplicateInstructionsToSplitBlocksEq2) {
   DomTreeUpdater DTU(DomTreeUpdater::UpdateStrategy::Lazy);
   ValueToValueMapTy Mapping;
   auto Split =
-      DuplicateInstructionsInSplitBetween(BB2, BB2, SubInst, Mapping, DTU);
+      DuplicateInstructionsInSplitBetween(BB2, BB2, SubInst, Mapping, &DTU);
 
   EXPECT_TRUE(Split);
   EXPECT_EQ(Mapping.size(), 2u);

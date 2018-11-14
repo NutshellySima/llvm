@@ -449,9 +449,10 @@ bool LoopRotate::rotateLoop(Loop *L, bool SimplifiedLatch) {
     // Right now OrigPreHeader has two successors, NewHeader and ExitBlock, and
     // thus is not a preheader anymore.
     // Split the edge to form a real preheader.
+    DomTreeUpdater DTU(DT, DomTreeUpdater::UpdateStrategy::Eager);
     BasicBlock *NewPH = SplitCriticalEdge(
         OrigPreheader, NewHeader,
-        CriticalEdgeSplittingOptions(DT, LI, MSSAU).setPreserveLCSSA());
+        CriticalEdgeSplittingOptions(&DTU, LI, MSSAU).setPreserveLCSSA());
     NewPH->setName(NewHeader->getName() + ".lr.ph");
 
     // Preserve canonical loop form, which means that 'Exit' should have only
@@ -470,7 +471,7 @@ bool LoopRotate::rotateLoop(Loop *L, bool SimplifiedLatch) {
       SplitLatchEdge |= L->getLoopLatch() == ExitPred;
       BasicBlock *ExitSplit = SplitCriticalEdge(
           ExitPred, Exit,
-          CriticalEdgeSplittingOptions(DT, LI, MSSAU).setPreserveLCSSA());
+          CriticalEdgeSplittingOptions(&DTU, LI, MSSAU).setPreserveLCSSA());
       ExitSplit->moveBefore(Exit);
     }
     assert(SplitLatchEdge &&

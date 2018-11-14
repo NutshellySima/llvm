@@ -114,7 +114,7 @@ static void placeSplitBlockCarefully(BasicBlock *NewBB,
 /// preheader, this method is called to insert one.  This method has two phases:
 /// preheader insertion and analysis updating.
 ///
-BasicBlock *llvm::InsertPreheaderForLoop(Loop *L, DominatorTree *DT,
+BasicBlock *llvm::InsertPreheaderForLoop(Loop *L, DomTreeUpdater *DTU,
                                          LoopInfo *LI, bool PreserveLCSSA) {
   BasicBlock *Header = L->getHeader();
 
@@ -136,7 +136,7 @@ BasicBlock *llvm::InsertPreheaderForLoop(Loop *L, DominatorTree *DT,
 
   // Split out the loop pre-header.
   BasicBlock *PreheaderBB;
-  PreheaderBB = SplitBlockPredecessors(Header, OutsideBlocks, ".preheader", DT,
+  PreheaderBB = SplitBlockPredecessors(Header, OutsideBlocks, ".preheader", DTU,
                                        LI, nullptr, PreserveLCSSA);
   if (!PreheaderBB)
     return nullptr;
@@ -250,8 +250,9 @@ static Loop *separateNestedLoop(Loop *L, BasicBlock *Preheader,
   if (SE)
     SE->forgetLoop(L);
 
+  DomTreeUpdater DTU(DT, DomTreeUpdater::UpdateStrategy::Eager);
   BasicBlock *NewBB = SplitBlockPredecessors(Header, OuterLoopPreds, ".outer",
-                                             DT, LI, nullptr, PreserveLCSSA);
+                                             &DTU, LI, nullptr, PreserveLCSSA);
 
   // Make sure that NewBB is put someplace intelligent, which doesn't mess up
   // code layout too horribly.
@@ -314,7 +315,7 @@ static Loop *separateNestedLoop(Loop *L, BasicBlock *Preheader,
 
   // Split edges to exit blocks from the inner loop, if they emerged in the
   // process of separating the outer one.
-  formDedicatedExitBlocks(L, DT, LI, PreserveLCSSA);
+  formDedicatedExitBlocks(L, &DTU, LI, PreserveLCSSA);
 
   if (PreserveLCSSA) {
     // Fix LCSSA form for L. Some values, which previously were only used inside
@@ -517,8 +518,9 @@ ReprocessLoop:
 
   // Does the loop already have a preheader?  If so, don't insert one.
   BasicBlock *Preheader = L->getLoopPreheader();
+  DomTreeUpdater DTU(DT, DomTreeUpdater::UpdateStrategy::Eager);
   if (!Preheader) {
-    Preheader = InsertPreheaderForLoop(L, DT, LI, PreserveLCSSA);
+    Preheader = InsertPreheaderForLoop(L, &DTU, LI, PreserveLCSSA);
     if (Preheader)
       Changed = true;
   }
@@ -527,7 +529,7 @@ ReprocessLoop:
   // predecessors that are inside of the loop.  This check guarantees that the
   // loop preheader/header will dominate the exit blocks.  If the exit block has
   // predecessors from outside of the loop, split the edge now.
-  if (formDedicatedExitBlocks(L, DT, LI, PreserveLCSSA))
+  if (formDedicatedExitBlocks(L, &DTU, LI, PreserveLCSSA))
     Changed = true;
 
   // If the header has more than two predecessors at this point (from the

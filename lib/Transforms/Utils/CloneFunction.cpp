@@ -798,7 +798,7 @@ Loop *llvm::cloneLoopWithPreheader(BasicBlock *Before, BasicBlock *LoopDomBB,
 /// StopAt instruction into a split block between BB and its predecessor.
 BasicBlock *llvm::DuplicateInstructionsInSplitBetween(
     BasicBlock *BB, BasicBlock *PredBB, Instruction *StopAt,
-    ValueToValueMapTy &ValueMapping, DomTreeUpdater &DTU) {
+    ValueToValueMapTy &ValueMapping, DomTreeUpdater *DTU) {
 
   assert(count(successors(PredBB), BB) == 1 &&
          "There must be a single edge between PredBB and BB!");
@@ -809,15 +809,9 @@ BasicBlock *llvm::DuplicateInstructionsInSplitBetween(
   for (; PHINode *PN = dyn_cast<PHINode>(BI); ++BI)
     ValueMapping[PN] = PN->getIncomingValueForBlock(PredBB);
 
-  BasicBlock *NewBB = SplitEdge(PredBB, BB);
+  BasicBlock *NewBB = SplitEdge(PredBB, BB, DTU);
   NewBB->setName(PredBB->getName() + ".split");
   Instruction *NewTerm = NewBB->getTerminator();
-
-  // FIXME: SplitEdge does not yet take a DTU, so we include the split edge
-  //        in the update set here.
-  DTU.applyUpdates({{DominatorTree::Delete, PredBB, BB},
-                    {DominatorTree::Insert, PredBB, NewBB},
-                    {DominatorTree::Insert, NewBB, BB}});
 
   // Clone the non-phi instructions of BB into NewBB, keeping track of the
   // mapping and using it to remap operands in the cloned instructions.

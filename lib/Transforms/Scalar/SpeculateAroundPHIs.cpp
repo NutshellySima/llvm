@@ -560,10 +560,11 @@ static void speculatePHIs(ArrayRef<PHINode *> SpecPNs,
   auto *ParentBB = SpecPNs[0]->getParent();
   SmallVector<BasicBlock *, 16> SpecPreds;
   SpecPreds.reserve(PredSet.size());
+  DomTreeUpdater DTU(DT, DomTreeUpdater::UpdateStrategy::Eager);
   for (auto *PredBB : PredSet) {
     auto *NewPredBB = SplitCriticalEdge(
         PredBB, ParentBB,
-        CriticalEdgeSplittingOptions(&DT).setMergeIdenticalEdges());
+        CriticalEdgeSplittingOptions(&DTU).setMergeIdenticalEdges());
     if (NewPredBB) {
       ++NumEdgesSplit;
       LLVM_DEBUG(dbgs() << "  Split critical edge from: " << PredBB->getName()

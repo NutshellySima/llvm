@@ -982,8 +982,9 @@ void LoopUnswitch::EmitPreheaderBranchOnCondition(Value *LIC, Constant *Val,
 
   // If either edge is critical, split it. This helps preserve LoopSimplify
   // form for enclosing loops.
+  DomTreeUpdater DTU(DT, DomTreeUpdater::UpdateStrategy::Eager);
   auto Options =
-      CriticalEdgeSplittingOptions(DT, LI, MSSAU.get()).setPreserveLCSSA();
+      CriticalEdgeSplittingOptions(&DTU, LI, MSSAU.get()).setPreserveLCSSA();
   SplitCriticalEdge(BI, 0, Options);
   SplitCriticalEdge(BI, 1, Options);
 }
@@ -1009,7 +1010,9 @@ void LoopUnswitch::UnswitchTrivialCondition(Loop *L, Value *Cond, Constant *Val,
   // First step, split the preheader, so that we know that there is a safe place
   // to insert the conditional branch.  We will change loopPreheader to have a
   // conditional branch on Cond.
-  BasicBlock *NewPH = SplitEdge(loopPreheader, loopHeader, DT, LI, MSSAU.get());
+  DomTreeUpdater DTU(DT, DomTreeUpdater::UpdateStrategy::Eager);
+  BasicBlock *NewPH =
+      SplitEdge(loopPreheader, loopHeader, &DTU, LI, MSSAU.get());
 
   // Now that we have a place to insert the conditional branch, create a place
   // to branch to: this is the exit block out of the loop that we should
@@ -1021,7 +1024,7 @@ void LoopUnswitch::UnswitchTrivialCondition(Loop *L, Value *Cond, Constant *Val,
   // loop header, not the preheader).
   assert(!L->contains(ExitBlock) && "Exit block is in the loop?");
   BasicBlock *NewExit =
-      SplitBlock(ExitBlock, &ExitBlock->front(), DT, LI, MSSAU.get());
+      SplitBlock(ExitBlock, &ExitBlock->front(), &DTU, LI, MSSAU.get());
 
   // Okay, now we have a position to branch from and a position to branch to,
   // insert the new conditional branch.
@@ -1210,6 +1213,7 @@ bool LoopUnswitch::TryTrivialLoopUnswitch(bool &Changed) {
 void LoopUnswitch::SplitExitEdges(Loop *L,
                                const SmallVectorImpl<BasicBlock *> &ExitBlocks){
 
+  DomTreeUpdater DTU(DT, DomTreeUpdater::UpdateStrategy::Eager);
   for (unsigned i = 0, e = ExitBlocks.size(); i != e; ++i) {
     BasicBlock *ExitBlock = ExitBlocks[i];
     SmallVector<BasicBlock *, 4> Preds(pred_begin(ExitBlock),
@@ -1217,7 +1221,7 @@ void LoopUnswitch::SplitExitEdges(Loop *L,
 
     // Although SplitBlockPredecessors doesn't preserve loop-simplify in
     // general, if we call it on all predecessors of all exits then it does.
-    SplitBlockPredecessors(ExitBlock, Preds, ".us-lcssa", DT, LI, MSSAU.get(),
+    SplitBlockPredecessors(ExitBlock, Preds, ".us-lcssa", &DTU, LI, MSSAU.get(),
                            /*PreserveLCSSA*/ true);
   }
 }
@@ -1243,8 +1247,9 @@ void LoopUnswitch::UnswitchNontrivialCondition(Value *LIC, Constant *Val,
 
   // First step, split the preheader and exit blocks, and add these blocks to
   // the LoopBlocks list.
+  DomTreeUpdater DTU(DT, DomTreeUpdater::UpdateStrategy::Eager);
   BasicBlock *NewPreheader =
-      SplitEdge(loopPreheader, loopHeader, DT, LI, MSSAU.get());
+      SplitEdge(loopPreheader, loopHeader, &DTU, LI, MSSAU.get());
   LoopBlocks.push_back(NewPreheader);
 
   // We want the loop to come after the preheader, but before the exit blocks.
@@ -1530,7 +1535,8 @@ void LoopUnswitch::RewriteLoopBodyWithConditionConstant(Loop *L, Value *LIC,
     // and hooked up so as to preserve the loop structure, because
     // trying to update it is complicated.  So instead we preserve the
     // loop structure and put the block on a dead code path.
-    SplitEdge(Switch, SISucc, DT, LI, MSSAU.get());
+    DomTreeUpdater DTU(DT, DomTreeUpdater::UpdateStrategy::Eager);
+    SplitEdge(Switch, SISucc, &DTU, LI, MSSAU.get());
     // Compute the successors instead of relying on the return value
     // of SplitEdge, since it may have split the switch successor
     // after PHI nodes.

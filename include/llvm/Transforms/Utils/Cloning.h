@@ -24,6 +24,7 @@
 #include "llvm/Analysis/AssumptionCache.h"
 #include "llvm/Analysis/InlineCost.h"
 #include "llvm/IR/CallSite.h"
+#include "llvm/IR/DomTreeUpdater.h"
 #include "llvm/IR/ValueHandle.h"
 #include "llvm/Transforms/Utils/ValueMapper.h"
 #include <functional>
@@ -267,8 +268,7 @@ BasicBlock *DuplicateInstructionsInSplitBetween(BasicBlock *BB,
                                                 BasicBlock *PredBB,
                                                 Instruction *StopAt,
                                                 ValueToValueMapTy &ValueMapping,
-                                                DomTreeUpdater &DTU);
-
+                                                DomTreeUpdater *DTU = nullptr);
 } // end namespace llvm
 
 #endif // LLVM_TRANSFORMS_UTILS_CLONING_H

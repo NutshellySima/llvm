@@ -26,6 +26,7 @@
 #include "llvm/Analysis/IVDescriptors.h"
 #include "llvm/Analysis/MustExecute.h"
 #include "llvm/Analysis/TargetTransformInfo.h"
+#include "llvm/IR/DomTreeUpdater.h"
 #include "llvm/IR/Dominators.h"
 #include "llvm/IR/IRBuilder.h"
 #include "llvm/IR/InstrTypes.h"
@@ -49,7 +50,7 @@ class SCEV;
 class TargetLibraryInfo;
 class TargetTransformInfo;
 
-BasicBlock *InsertPreheaderForLoop(Loop *L, DominatorTree *DT, LoopInfo *LI,
+BasicBlock *InsertPreheaderForLoop(Loop *L, DomTreeUpdater *DTU, LoopInfo *LI,
                                    bool PreserveLCSSA);
 
 /// Ensure that all exit blocks of the loop are dedicated exits.
@@ -57,7 +58,7 @@ BasicBlock *InsertPreheaderForLoop(Loop *L, DominatorTree *DT, LoopInfo *LI,
 /// For any loop exit block with non-loop predecessors, we split the loop
 /// predecessors to use a dedicated loop exit block. We update the dominator
 /// tree and loop info if provided, and will preserve LCSSA if requested.
-bool formDedicatedExitBlocks(Loop *L, DominatorTree *DT, LoopInfo *LI,
+bool formDedicatedExitBlocks(Loop *L, DomTreeUpdater *DTU, LoopInfo *LI,
                              bool PreserveLCSSA);
 
 /// Ensures LCSSA form for every instruction from the Worklist in the scope of
@@ -131,11 +132,11 @@ bool hoistRegion(DomTreeNode *, AliasAnalysis *, LoopInfo *, DominatorTree *,
 ///   - The loop needs to have a Preheader
 ///   - A unique dedicated exit block must exist
 ///
-/// This also updates the relevant analysis information in \p DT, \p SE, and \p
+/// This also updates the relevant analysis information in \p DTU, \p SE, and \p
 /// LI if pointers to those are provided.
 /// It also updates the loop PM if an updater struct is provided.
 
-void deleteDeadLoop(Loop *L, DominatorTree *DT, ScalarEvolution *SE,
+void deleteDeadLoop(Loop *L, DomTreeUpdater *DTU, ScalarEvolution *SE,
                     LoopInfo *LI);
 
 /// Try to promote memory values to scalars by sinking stores out of

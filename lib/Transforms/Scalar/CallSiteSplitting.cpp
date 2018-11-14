@@ -327,7 +327,7 @@ static void splitCallSite(
     BasicBlock *PredBB = Preds[i].first;
     BasicBlock *SplitBlock = DuplicateInstructionsInSplitBetween(
         TailBB, PredBB, &*std::next(Instr->getIterator()), ValueToValueMaps[i],
-        DTU);
+        &DTU);
     assert(SplitBlock && "Unexpected new basic block split.");
 
     Instruction *NewCI =
