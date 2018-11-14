@@ -795,11 +795,9 @@ Loop *llvm::cloneLoopWithPreheader(BasicBlock *Before, BasicBlock *LoopDomBB,
 
 /// Duplicate non-Phi instructions from the beginning of block up to
 /// StopAt instruction into a split block between BB and its predecessor.
-BasicBlock *
-llvm::DuplicateInstructionsInSplitBetween(BasicBlock *BB, BasicBlock *PredBB,
-                                          Instruction *StopAt,
-                                          ValueToValueMapTy &ValueMapping,
-                                          DominatorTree *DT) {
+BasicBlock *llvm::DuplicateInstructionsInSplitBetween(
+    BasicBlock *BB, BasicBlock *PredBB, Instruction *StopAt,
+    ValueToValueMapTy &ValueMapping, DomTreeUpdater *DTU) {
   // We are going to have to map operands from the original BB block to the new
   // copy of the block 'NewBB'.  If there are PHI nodes in BB, evaluate them to
   // account for entry from PredBB.
@@ -807,7 +805,7 @@ llvm::DuplicateInstructionsInSplitBetween(BasicBlock *BB, BasicBlock *PredBB,
   for (; PHINode *PN = dyn_cast<PHINode>(BI); ++BI)
     ValueMapping[PN] = PN->getIncomingValueForBlock(PredBB);
 
-  BasicBlock *NewBB = SplitEdge(PredBB, BB, DT);
+  BasicBlock *NewBB = SplitEdge(PredBB, BB, DTU);
   NewBB->setName(PredBB->getName() + ".split");
   Instruction *NewTerm = NewBB->getTerminator();
 

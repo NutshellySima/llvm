@@ -563,8 +563,9 @@ bool PlaceSafepoints::runOnFunction(Function &F) {
         // the dominator tree once.  Alternatively, we could just keep it up to
         // date and use a more natural merged loop.
         SetVector<BasicBlock *> SplitBackedges;
+        DomTreeUpdater DTU(DT, DomTreeUpdater::UpdateStrategy::Eager);
         for (BasicBlock *Header : Headers) {
-          BasicBlock *NewBB = SplitEdge(Term->getParent(), Header, &DT);
+          BasicBlock *NewBB = SplitEdge(Term->getParent(), Header, &DTU);
           PollsNeeded.push_back(NewBB->getTerminator());
           NumBackedgeSafepoints++;
         }

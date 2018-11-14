@@ -157,6 +157,7 @@ static LoopDeletionResult deleteLoopIfDead(Loop *L, DominatorTree &DT,
 
   BasicBlock *ExitBlock = L->getUniqueExitBlock();
 
+  auto DTU = DomTreeUpdater(DT, DomTreeUpdater::UpdateStrategy::Eager);
   if (ExitBlock && isLoopNeverExecuted(L)) {
     LLVM_DEBUG(dbgs() << "Loop is proven to never execute, delete it!");
     // Set incoming value to undef for phi nodes in the exit block.
@@ -164,7 +165,7 @@ static LoopDeletionResult deleteLoopIfDead(Loop *L, DominatorTree &DT,
       std::fill(P.incoming_values().begin(), P.incoming_values().end(),
                 UndefValue::get(P.getType()));
     }
-    deleteDeadLoop(L, &DT, &SE, &LI);
+    deleteDeadLoop(L, &DTU, &SE, &LI);
     ++NumDeleted;
     return LoopDeletionResult::Deleted;
   }
@@ -200,7 +201,7 @@ static LoopDeletionResult deleteLoopIfDead(Loop *L, DominatorTree &DT,
   }
 
   LLVM_DEBUG(dbgs() << "Loop is invariant, delete it!");
-  deleteDeadLoop(L, &DT, &SE, &LI);
+  deleteDeadLoop(L, &DTU, &SE, &LI);
   ++NumDeleted;
 
   return LoopDeletionResult::Deleted;

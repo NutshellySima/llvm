@@ -1685,8 +1685,9 @@ void CHR::transformScopes(CHRScope *Scope, DenseSet<PHINode *> &TrivialPHIs) {
   // entry/exit blocks of the region are still valid after the split.
   CHR_DEBUG(dbgs() << "Splitting entry block " << EntryBlock->getName()
             << " at " << *Scope->BranchInsertPoint << "\n");
+  auto DTU = DomTreeUpdater(DT, DomTreeUpdater::UpdateStrategy::Eager);
   BasicBlock *NewEntryBlock =
-      SplitBlock(EntryBlock, Scope->BranchInsertPoint, &DT);
+      SplitBlock(EntryBlock, Scope->BranchInsertPoint, &DTU);
   assert(NewEntryBlock->getSinglePredecessor() == EntryBlock &&
          "NewEntryBlock's only pred must be EntryBlock");
   FirstRegion->replaceEntryRecursive(NewEntryBlock);

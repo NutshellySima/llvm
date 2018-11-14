@@ -24,6 +24,7 @@
 #include "llvm/Analysis/AssumptionCache.h"
 #include "llvm/Analysis/InlineCost.h"
 #include "llvm/IR/CallSite.h"
+#include "llvm/IR/DomTreeUpdater.h"
 #include "llvm/IR/ValueHandle.h"
 #include "llvm/Transforms/Utils/ValueMapper.h"
 #include <functional>
@@ -266,11 +267,11 @@ void remapInstructionsInBlocks(const SmallVectorImpl<BasicBlock *> &Blocks,
 /// we replace them with the uses of corresponding Phi inputs. ValueMapping
 /// is used to map the original instructions from BB to their newly-created
 /// copies. Returns the split block.
-BasicBlock *
-DuplicateInstructionsInSplitBetween(BasicBlock *BB, BasicBlock *PredBB,
-                                    Instruction *StopAt,
-                                    ValueToValueMapTy &ValueMapping,
-                                    DominatorTree *DT = nullptr);
+BasicBlock *DuplicateInstructionsInSplitBetween(BasicBlock *BB,
+                                                BasicBlock *PredBB,
+                                                Instruction *StopAt,
+                                                ValueToValueMapTy &ValueMapping,
+                                                DomTreeUpdater *DTU = nullptr);
 } // end namespace llvm
 
 #endif // LLVM_TRANSFORMS_UTILS_CLONING_H

@@ -487,8 +487,9 @@ void LibCallsShrinkWrap::shrinkWrapCI(CallInst *CI, Value *Cond) {
   MDNode *BranchWeights =
       MDBuilder(CI->getContext()).createBranchWeights(1, 2000);
 
+  DomTreeUpdater DTU(DT, DomTreeUpdater::UpdateStrategy::Eager);
   Instruction *NewInst =
-      SplitBlockAndInsertIfThen(Cond, CI, false, BranchWeights, DT);
+      SplitBlockAndInsertIfThen(Cond, CI, false, BranchWeights, &DTU);
   BasicBlock *CallBB = NewInst->getParent();
   CallBB->setName("cdce.call");
   BasicBlock *SuccBB = CallBB->getSingleSuccessor();

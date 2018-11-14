@@ -352,6 +352,7 @@ static void SplitCriticalSideEffectEdges(Function &Fn, DominatorTree *DT,
     PHINode *PN = dyn_cast<PHINode>(BB.begin());
     if (!PN) continue;
 
+    DomTreeUpdater DTU(DT, DomTreeUpdater::UpdateStrategy::Eager);
   ReprocessBlock:
     // For each block with a PHI node, check to see if any of the input values
     // are potentially trapping constant expressions.  Constant expressions are
@@ -372,7 +373,7 @@ static void SplitCriticalSideEffectEdges(Function &Fn, DominatorTree *DT,
         // Okay, we have to split this edge.
         SplitCriticalEdge(
             Pred->getTerminator(), GetSuccessorNumber(Pred, &BB),
-            CriticalEdgeSplittingOptions(DT, LI).setMergeIdenticalEdges());
+            CriticalEdgeSplittingOptions(&DTU, LI).setMergeIdenticalEdges());
         goto ReprocessBlock;
       }
   }

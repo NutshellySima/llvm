@@ -2328,8 +2328,9 @@ bool GVN::performPRE(Function &F) {
 /// Split the critical edge connecting the given two blocks, and return
 /// the block inserted to the critical edge.
 BasicBlock *GVN::splitCriticalEdges(BasicBlock *Pred, BasicBlock *Succ) {
+  auto DTU = DomTreeUpdater(DT, DomTreeUpdater::UpdateStrategy::Eager);
   BasicBlock *BB =
-      SplitCriticalEdge(Pred, Succ, CriticalEdgeSplittingOptions(DT));
+      SplitCriticalEdge(Pred, Succ, CriticalEdgeSplittingOptions(&DTU));
   if (MD)
     MD->invalidateCachedPredecessors();
   return BB;
@@ -2342,8 +2343,9 @@ bool GVN::splitCriticalEdges() {
     return false;
   do {
     std::pair<Instruction *, unsigned> Edge = toSplit.pop_back_val();
+    auto DTU = DomTreeUpdater(DT, DomTreeUpdater::UpdateStrategy::Eager);
     SplitCriticalEdge(Edge.first, Edge.second,
-                      CriticalEdgeSplittingOptions(DT));
+                      CriticalEdgeSplittingOptions(&DTU));
   } while (!toSplit.empty());
   if (MD) MD->invalidateCachedPredecessors();
   return true;

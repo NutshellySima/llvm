@@ -340,16 +340,16 @@ bool MemOPSizeOpt::perform(MemIntrinsic *MI) {
   LLVM_DEBUG(dbgs() << *BB << "\n");
   auto OrigBBFreq = BFI.getBlockFreq(BB);
 
-  BasicBlock *DefaultBB = SplitBlock(BB, MI, DT);
+  DomTreeUpdater DTU(DT, DomTreeUpdater::UpdateStrategy::Eager);
+  BasicBlock *DefaultBB = SplitBlock(BB, MI, &DTU);
   BasicBlock::iterator It(*MI);
   ++It;
   assert(It != DefaultBB->end());
-  BasicBlock *MergeBB = SplitBlock(DefaultBB, &(*It), DT);
+  BasicBlock *MergeBB = SplitBlock(DefaultBB, &(*It), &DTU);
   MergeBB->setName("MemOP.Merge");
   BFI.setBlockFreq(MergeBB, OrigBBFreq.getFrequency());
   DefaultBB->setName("MemOP.Default");
 
-  DomTreeUpdater DTU(DT, DomTreeUpdater::UpdateStrategy::Eager);
   auto &Ctx = Func.getContext();
   IRBuilder<> IRB(BB);
   BB->getTerminator()->eraseFromParent();

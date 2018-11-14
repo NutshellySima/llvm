@@ -325,9 +325,10 @@ static void splitCallSite(
   ValueToValueMapTy ValueToValueMaps[2];
   for (unsigned i = 0; i < Preds.size(); i++) {
     BasicBlock *PredBB = Preds[i].first;
+    auto DTU = DomTreeUpdater(DT, DomTreeUpdater::UpdateStrategy::Eager);
     BasicBlock *SplitBlock = DuplicateInstructionsInSplitBetween(
         TailBB, PredBB, &*std::next(Instr->getIterator()), ValueToValueMaps[i],
-        DT);
+        &DTU);
     assert(SplitBlock && "Unexpected new basic block split.");
 
     Instruction *NewCI =

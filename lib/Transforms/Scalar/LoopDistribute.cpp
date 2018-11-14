@@ -47,6 +47,7 @@
 #include "llvm/IR/BasicBlock.h"
 #include "llvm/IR/Constants.h"
 #include "llvm/IR/DiagnosticInfo.h"
+#include "llvm/IR/DomTreeUpdater.h"
 #include "llvm/IR/Dominators.h"
 #include "llvm/IR/Function.h"
 #include "llvm/IR/InstrTypes.h"
@@ -751,8 +752,9 @@ public:
     // To keep things simple have an empty preheader before we version or clone
     // the loop.  (Also split if this has no predecessor, i.e. entry, because we
     // rely on PH having a predecessor.)
+    DomTreeUpdater DTU(DT, DomTreeUpdater::UpdateStrategy::Eager);
     if (!PH->getSinglePredecessor() || &*PH->begin() != PH->getTerminator())
-      SplitBlock(PH, PH->getTerminator(), DT, LI);
+      SplitBlock(PH, PH->getTerminator(), &DTU, LI);
 
     // If we need run-time checks, version the loop now.
     auto PtrToPartition = Partitions.computePartitionSetForPointers(*LAI);

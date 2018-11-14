@@ -551,7 +551,8 @@ void CodeExtractor::severSplitPHINodes(BasicBlock *&Header) {
   // containing PHI nodes merging values from outside of the region, and a
   // second that contains all of the code for the block and merges back any
   // incoming values from inside of the region.
-  BasicBlock *NewBB = SplitBlock(Header, Header->getFirstNonPHI(), DT);
+  DomTreeUpdater DTU(DT, DomTreeUpdater::UpdateStrategy::Eager);
+  BasicBlock *NewBB = SplitBlock(Header, Header->getFirstNonPHI(), &DTU);
 
   // We only want to code extract the second block now, and it becomes the new
   // header of the region.

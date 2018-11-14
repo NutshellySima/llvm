@@ -26,6 +26,7 @@
 #include "llvm/IR/BasicBlock.h"
 #include "llvm/IR/Constants.h"
 #include "llvm/IR/DiagnosticInfo.h"
+#include "llvm/IR/DomTreeUpdater.h"
 #include "llvm/IR/Dominators.h"
 #include "llvm/IR/Function.h"
 #include "llvm/IR/InstrTypes.h"
@@ -1243,7 +1244,8 @@ bool LoopInterchangeTransform::transform() {
 
     // Splits the inner loops phi nodes out into a separate basic block.
     BasicBlock *InnerLoopHeader = InnerLoop->getHeader();
-    SplitBlock(InnerLoopHeader, InnerLoopHeader->getFirstNonPHI(), DT, LI);
+    DomTreeUpdater DTU(DT, DomTreeUpdater::UpdateStrategy::Eager);
+    SplitBlock(InnerLoopHeader, InnerLoopHeader->getFirstNonPHI(), &DTU, LI);
     LLVM_DEBUG(dbgs() << "splitting InnerLoopHeader done\n");
   }
 
@@ -1259,7 +1261,8 @@ bool LoopInterchangeTransform::transform() {
 void LoopInterchangeTransform::splitInnerLoopLatch(Instruction *Inc) {
   BasicBlock *InnerLoopLatch = InnerLoop->getLoopLatch();
   BasicBlock *InnerLoopLatchPred = InnerLoopLatch;
-  InnerLoopLatch = SplitBlock(InnerLoopLatchPred, Inc, DT, LI);
+  DomTreeUpdater DTU(DT, DomTreeUpdater::UpdateStrategy::Eager);
+  InnerLoopLatch = SplitBlock(InnerLoopLatchPred, Inc, &DTU, LI);
 }
 
 /// \brief Move all instructions except the terminator from FromBB right before
@@ -1364,11 +1367,12 @@ bool LoopInterchangeTransform::adjustLoopBranches() {
   // predecessors. This allows us to move them easily. We use
   // InsertPreHeaderForLoop to create an 'extra' preheader, if the existing
   // preheaders do not satisfy those conditions.
+  DomTreeUpdater DTU(DT, DomTreeUpdater::UpdateStrategy::Eager);
   if (isa<PHINode>(OuterLoopPreHeader->begin()) ||
       !OuterLoopPreHeader->getUniquePredecessor())
-    OuterLoopPreHeader = InsertPreheaderForLoop(OuterLoop, DT, LI, true);
+    OuterLoopPreHeader = InsertPreheaderForLoop(OuterLoop, &DTU, LI, true);
   if (InnerLoopPreHeader == OuterLoop->getHeader())
-    InnerLoopPreHeader = InsertPreheaderForLoop(InnerLoop, DT, LI, true);
+    InnerLoopPreHeader = InsertPreheaderForLoop(InnerLoop, &DTU, LI, true);
 
   // Adjust the loop preheader
   BasicBlock *InnerLoopHeader = InnerLoop->getHeader();

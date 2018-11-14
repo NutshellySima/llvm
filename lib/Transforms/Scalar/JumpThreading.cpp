@@ -2090,19 +2090,15 @@ BasicBlock *JumpThreadingPass::SplitBlockPreds(BasicBlock *BB,
   // instead of just one.
   if (BB->isLandingPad()) {
     std::string NewName = std::string(Suffix) + ".split-lp";
-    SplitLandingPadPredecessors(BB, Preds, Suffix, NewName.c_str(), NewBBs);
+    SplitLandingPadPredecessors(BB, Preds, Suffix, NewName.c_str(), NewBBs,
+                                DTU);
   } else {
-    NewBBs.push_back(SplitBlockPredecessors(BB, Preds, Suffix));
+    NewBBs.push_back(SplitBlockPredecessors(BB, Preds, Suffix, DTU));
   }
 
-  std::vector<DominatorTree::UpdateType> Updates;
-  Updates.reserve((2 * Preds.size()) + NewBBs.size());
   for (auto NewBB : NewBBs) {
     BlockFrequency NewBBFreq(0);
-    Updates.push_back({DominatorTree::Insert, NewBB, BB});
     for (auto Pred : predecessors(NewBB)) {
-      Updates.push_back({DominatorTree::Delete, Pred, BB});
-      Updates.push_back({DominatorTree::Insert, Pred, NewBB});
       if (HasProfileData) // Update frequencies between Pred -> NewBB.
         NewBBFreq += FreqMap.lookup(Pred);
     }
@@ -2110,7 +2106,6 @@ BasicBlock *JumpThreadingPass::SplitBlockPreds(BasicBlock *BB,
       BFI->setBlockFreq(NewBB, NewBBFreq.getFrequency());
   }
 
-  DTU->applyUpdates(Updates);
   return NewBBs[0];
 }
 
@@ -2279,10 +2274,7 @@ bool JumpThreadingPass::DuplicateCondBranchOnPHIIntoPred(
 
   if (!OldPredBranch || !OldPredBranch->isUnconditional()) {
     BasicBlock *OldPredBB = PredBB;
-    PredBB = SplitEdge(OldPredBB, BB);
-    Updates.push_back({DominatorTree::Insert, OldPredBB, PredBB});
-    Updates.push_back({DominatorTree::Insert, PredBB, BB});
-    Updates.push_back({DominatorTree::Delete, OldPredBB, BB});
+    PredBB = SplitEdge(OldPredBB, BB, DTU);
     OldPredBranch = cast<BranchInst>(PredBB->getTerminator());
   }
 
@@ -2539,7 +2531,7 @@ bool JumpThreadingPass::TryToUnfoldSelectInCurrBB(BasicBlock *BB) {
       continue;
     // Expand the select.
     Instruction *Term =
-        SplitBlockAndInsertIfThen(SI->getCondition(), SI, false);
+        SplitBlockAndInsertIfThen(SI->getCondition(), SI, false, nullptr, DTU);
     BasicBlock *SplitBB = SI->getParent();
     BasicBlock *NewBB = Term->getParent();
     PHINode *NewPN = PHINode::Create(SI->getType(), 2, "", SI);
@@ -2547,18 +2539,6 @@ bool JumpThreadingPass::TryToUnfoldSelectInCurrBB(BasicBlock *BB) {
     NewPN->addIncoming(SI->getFalseValue(), BB);
     SI->replaceAllUsesWith(NewPN);
     SI->eraseFromParent();
-    // NewBB and SplitBB are newly created blocks which require insertion.
-    std::vector<DominatorTree::UpdateType> Updates;
-    Updates.reserve((2 * SplitBB->getTerminator()->getNumSuccessors()) + 3);
-    Updates.push_back({DominatorTree::Insert, BB, SplitBB});
-    Updates.push_back({DominatorTree::Insert, BB, NewBB});
-    Updates.push_back({DominatorTree::Insert, NewBB, SplitBB});
-    // BB's successors were moved to SplitBB, update DTU accordingly.
-    for (auto *Succ : successors(SplitBB)) {
-      Updates.push_back({DominatorTree::Delete, BB, Succ});
-      Updates.push_back({DominatorTree::Insert, SplitBB, Succ});
-    }
-    DTU->applyUpdates(Updates);
     return true;
   }
   return false;

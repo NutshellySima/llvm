@@ -5197,14 +5197,15 @@ void LSRInstance::RewriteForPHI(
         if (!PNLoop || Parent != PNLoop->getHeader()) {
           // Split the critical edge.
           BasicBlock *NewBB = nullptr;
+          DomTreeUpdater DTU(DT, DomTreeUpdater::UpdateStrategy::Eager);
           if (!Parent->isLandingPad()) {
             NewBB = SplitCriticalEdge(BB, Parent,
-                                      CriticalEdgeSplittingOptions(&DT, &LI)
+                                      CriticalEdgeSplittingOptions(&DTU, &LI)
                                           .setMergeIdenticalEdges()
                                           .setDontDeleteUselessPHIs());
           } else {
             SmallVector<BasicBlock*, 2> NewBBs;
-            SplitLandingPadPredecessors(Parent, BB, "", "", NewBBs, &DT, &LI);
+            SplitLandingPadPredecessors(Parent, BB, "", "", NewBBs, &DTU, &LI);
             NewBB = NewBBs[0];
           }
           // If NewBB==NULL, then SplitCriticalEdge refused to split because all

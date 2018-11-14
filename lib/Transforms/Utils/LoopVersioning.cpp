@@ -92,8 +92,9 @@ void LoopVersioning::versionLoop(
 
   // Create empty preheader for the loop (and after cloning for the
   // non-versioned loop).
+  DomTreeUpdater DTU(DT, DomTreeUpdater::UpdateStrategy::Eager);
   BasicBlock *PH =
-      SplitBlock(RuntimeCheckBB, RuntimeCheckBB->getTerminator(), DT, LI);
+      SplitBlock(RuntimeCheckBB, RuntimeCheckBB->getTerminator(), &DTU, LI);
   PH->setName(VersionedLoop->getHeader()->getName() + ".ph");
 
   // Clone the loop including the preheader.

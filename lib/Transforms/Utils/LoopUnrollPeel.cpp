@@ -561,11 +561,12 @@ bool llvm::peelLoop(Loop *L, unsigned PeelCount, LoopInfo *LI,
   //  If (cond) goto Header
   // Exit:
 
-  BasicBlock *InsertTop = SplitEdge(PreHeader, Header, DT, LI);
+  DomTreeUpdater DTU(DT, DomTreeUpdater::UpdateStrategy::Eager);
+  BasicBlock *InsertTop = SplitEdge(PreHeader, Header, &DTU, LI);
   BasicBlock *InsertBot =
-      SplitBlock(InsertTop, InsertTop->getTerminator(), DT, LI);
+      SplitBlock(InsertTop, InsertTop->getTerminator(), &DTU, LI);
   BasicBlock *NewPreHeader =
-      SplitBlock(InsertBot, InsertBot->getTerminator(), DT, LI);
+      SplitBlock(InsertBot, InsertBot->getTerminator(), &DTU, LI);
 
   InsertTop->setName(Header->getName() + ".peel.begin");
   InsertBot->setName(Header->getName() + ".peel.next");
@@ -626,7 +627,7 @@ bool llvm::peelLoop(Loop *L, unsigned PeelCount, LoopInfo *LI,
     LatchBRCopy->setMetadata(LLVMContext::MD_loop, nullptr);
 
     InsertTop = InsertBot;
-    InsertBot = SplitBlock(InsertBot, InsertBot->getTerminator(), DT, LI);
+    InsertBot = SplitBlock(InsertBot, InsertBot->getTerminator(), &DTU, LI);
     InsertBot->setName(Header->getName() + ".peel.next");
 
     F->getBasicBlockList().splice(InsertTop->getIterator(),

@@ -70,6 +70,7 @@ static void ConnectProlog(Loop *L, Value *BECount, unsigned Count,
                           BasicBlock *PreHeader, BasicBlock *NewPreHeader,
                           ValueToValueMapTy &VMap, DominatorTree *DT,
                           LoopInfo *LI, bool PreserveLCSSA) {
+  DomTreeUpdater DTU(DT, DomTreeUpdater::UpdateStrategy::Eager);
   BasicBlock *Latch = L->getLoopLatch();
   assert(Latch && "Loop must have a latch");
   BasicBlock *PrologLatch = cast<BasicBlock>(VMap[Latch]);
@@ -123,7 +124,7 @@ static void ConnectProlog(Loop *L, Value *BECount, unsigned Count,
       if (PrologLoop->contains(PredBB))
         PrologExitPreds.push_back(PredBB);
 
-    SplitBlockPredecessors(PrologExit, PrologExitPreds, ".unr-lcssa", DT, LI,
+    SplitBlockPredecessors(PrologExit, PrologExitPreds, ".unr-lcssa", &DTU, LI,
                            nullptr, PreserveLCSSA);
   }
 
@@ -142,7 +143,7 @@ static void ConnectProlog(Loop *L, Value *BECount, unsigned Count,
       B.CreateICmpULT(BECount, ConstantInt::get(BECount->getType(), Count - 1));
   // Split the exit to maintain loop canonicalization guarantees
   SmallVector<BasicBlock *, 4> Preds(predecessors(OriginalLoopLatchExit));
-  SplitBlockPredecessors(OriginalLoopLatchExit, Preds, ".unr-lcssa", DT, LI,
+  SplitBlockPredecessors(OriginalLoopLatchExit, Preds, ".unr-lcssa", &DTU, LI,
                          nullptr, PreserveLCSSA);
   // Add the branch to the exit block (around the unrolled loop)
   B.CreateCondBr(BrLoopExit, OriginalLoopLatchExit, NewPreHeader);
@@ -168,6 +169,7 @@ static void ConnectEpilog(Loop *L, Value *ModVal, BasicBlock *NewExit,
                           BasicBlock *EpilogPreHeader, BasicBlock *NewPreHeader,
                           ValueToValueMapTy &VMap, DominatorTree *DT,
                           LoopInfo *LI, bool PreserveLCSSA)  {
+  DomTreeUpdater DTU(DT, DomTreeUpdater::UpdateStrategy::Eager);
   BasicBlock *Latch = L->getLoopLatch();
   assert(Latch && "Loop must have a latch");
   BasicBlock *EpilogLatch = cast<BasicBlock>(VMap[Latch]);
@@ -257,7 +259,7 @@ static void ConnectEpilog(Loop *L, Value *ModVal, BasicBlock *NewExit,
   assert(Exit && "Loop must have a single exit block only");
   // Split the epilogue exit to maintain loop canonicalization guarantees
   SmallVector<BasicBlock*, 4> Preds(predecessors(Exit));
-  SplitBlockPredecessors(Exit, Preds, ".epilog-lcssa", DT, LI, nullptr,
+  SplitBlockPredecessors(Exit, Preds, ".epilog-lcssa", &DTU, LI, nullptr,
                          PreserveLCSSA);
   // Add the branch to the exit block (around the unrolling loop)
   B.CreateCondBr(BrLoopExit, EpilogPreHeader, Exit);
@@ -267,7 +269,7 @@ static void ConnectEpilog(Loop *L, Value *ModVal, BasicBlock *NewExit,
 
   // Split the main loop exit to maintain canonicalization guarantees.
   SmallVector<BasicBlock*, 4> NewExitPreds{Latch};
-  SplitBlockPredecessors(NewExit, NewExitPreds, ".loopexit", DT, LI, nullptr,
+  SplitBlockPredecessors(NewExit, NewExitPreds, ".loopexit", &DTU, LI, nullptr,
                          PreserveLCSSA);
 }
 
@@ -540,6 +542,8 @@ bool llvm::UnrollRuntimeLoopRemainder(Loop *L, unsigned Count,
     return false;
   }
 
+  DomTreeUpdater DTU(DT, DomTreeUpdater::UpdateStrategy::Eager);
+
   // Guaranteed by LoopSimplifyForm.
   BasicBlock *Latch = L->getLoopLatch();
   BasicBlock *Header = L->getHeader();
@@ -646,11 +650,11 @@ bool llvm::UnrollRuntimeLoopRemainder(Loop *L, unsigned Count,
   if (UseEpilogRemainder) {
     // If epilog remainder
     // Split PreHeader to insert a branch around loop for unrolling.
-    NewPreHeader = SplitBlock(PreHeader, PreHeader->getTerminator(), DT, LI);
+    NewPreHeader = SplitBlock(PreHeader, PreHeader->getTerminator(), &DTU, LI);
     NewPreHeader->setName(PreHeader->getName() + ".new");
     // Split LatchExit to create phi nodes from branch above.
     SmallVector<BasicBlock*, 4> Preds(predecessors(LatchExit));
-    NewExit = SplitBlockPredecessors(LatchExit, Preds, ".unr-lcssa", DT, LI,
+    NewExit = SplitBlockPredecessors(LatchExit, Preds, ".unr-lcssa", &DTU, LI,
                                      nullptr, PreserveLCSSA);
     // NewExit gets its DebugLoc from LatchExit, which is not part of the
     // original Loop.
@@ -658,18 +662,19 @@ bool llvm::UnrollRuntimeLoopRemainder(Loop *L, unsigned Count,
     auto *NewExitTerminator = NewExit->getTerminator();
     NewExitTerminator->setDebugLoc(Header->getTerminator()->getDebugLoc());
     // Split NewExit to insert epilog remainder loop.
-    EpilogPreHeader = SplitBlock(NewExit, NewExitTerminator, DT, LI);
+    EpilogPreHeader = SplitBlock(NewExit, NewExitTerminator, &DTU, LI);
     EpilogPreHeader->setName(Header->getName() + ".epil.preheader");
   } else {
     // If prolog remainder
     // Split the original preheader twice to insert prolog remainder loop
-    PrologPreHeader = SplitEdge(PreHeader, Header, DT, LI);
+    PrologPreHeader = SplitEdge(PreHeader, Header, &DTU, LI);
     PrologPreHeader->setName(Header->getName() + ".prol.preheader");
-    PrologExit = SplitBlock(PrologPreHeader, PrologPreHeader->getTerminator(),
-                            DT, LI);
+    PrologExit =
+        SplitBlock(PrologPreHeader, PrologPreHeader->getTerminator(), &DTU, LI);
     PrologExit->setName(Header->getName() + ".prol.loopexit");
     // Split PrologExit to get NewPreHeader.
-    NewPreHeader = SplitBlock(PrologExit, PrologExit->getTerminator(), DT, LI);
+    NewPreHeader =
+        SplitBlock(PrologExit, PrologExit->getTerminator(), &DTU, LI);
     NewPreHeader->setName(PreHeader->getName() + ".new");
   }
   // Loop structure should be the following:
@@ -904,11 +909,11 @@ bool llvm::UnrollRuntimeLoopRemainder(Loop *L, unsigned Count,
   if (OtherExits.size() > 0) {
     // Generate dedicated exit blocks for the original loop, to preserve
     // LoopSimplifyForm.
-    formDedicatedExitBlocks(L, DT, LI, PreserveLCSSA);
+    formDedicatedExitBlocks(L, &DTU, LI, PreserveLCSSA);
     // Generate dedicated exit blocks for the remainder loop if one exists, to
     // preserve LoopSimplifyForm.
     if (remainderLoop)
-      formDedicatedExitBlocks(remainderLoop, DT, LI, PreserveLCSSA);
+      formDedicatedExitBlocks(remainderLoop, &DTU, LI, PreserveLCSSA);
   }
 
   if (remainderLoop && UnrollRemainder) {

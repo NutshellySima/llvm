@@ -1105,8 +1105,9 @@ Value *DFSanFunction::combineShadows(Value *V1, Value *V2, Instruction *Pos) {
   } else {
     BasicBlock *Head = Pos->getParent();
     Value *Ne = IRB.CreateICmpNE(V1, V2);
+    DomTreeUpdater DTU(DT, DomTreeUpdater::UpdateStrategy::Eager);
     BranchInst *BI = cast<BranchInst>(SplitBlockAndInsertIfThen(
-        Ne, Pos, /*Unreachable=*/false, DFS.ColdCallWeights, &DT));
+        Ne, Pos, /*Unreachable=*/false, DFS.ColdCallWeights, &DTU));
     IRBuilder<> ThenIRB(BI);
     CallInst *Call = ThenIRB.CreateCall(DFS.DFSanUnionFn, {V1, V2});
     Call->addAttribute(AttributeList::ReturnIndex, Attribute::ZExt);
@@ -1655,8 +1656,10 @@ void DFSanVisitor::visitCallSite(CallSite CS) {
       if (II->getNormalDest()->getSinglePredecessor()) {
         Next = &II->getNormalDest()->front();
       } else {
+        auto DTU =
+            DomTreeUpdater(&DFSF.DT, DomTreeUpdater::UpdateStrategy::Eager);
         BasicBlock *NewBB =
-            SplitEdge(II->getParent(), II->getNormalDest(), &DFSF.DT);
+            SplitEdge(II->getParent(), II->getNormalDest(), &DTU);
         Next = &NewBB->front();
       }
     } else {
